@@ -870,7 +870,7 @@ export const Members: React.FC<MembersProps> = ({
               {paginatedMembers.length === 0 ? (
                 <tr>
                   <td colSpan={statusTab === 'da_thoi_viec' ? 11 : 13} className="py-10 text-center text-slate-400">
-                    {members.length === 0 ? (
+                    {statusCounts.dang_hoat_dong === 0 && statusCounts.da_thoi_viec === 0 ? (
                       <div className="max-w-lg mx-auto py-6 px-4 flex flex-col items-center justify-center text-center">
                         <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mb-3">
                           <Users className="w-7 h-7" />

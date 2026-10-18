@@ -1543,39 +1543,237 @@ class StorageService {
     };
   }
 
-  // --- BACKGROUND SYNC HELPERS ---
-  private async bgUpsert(table: string, rows: any | any[]): Promise<void> {
-    if (this.syncStatus === 'connected_missing_tables') return;
+  // --- PENDING SYNC QUEUE & TOMBSTONES (ĐẢM BẢO XÓA / CẬP NHẬT KHÔNG BAO GIỜ BỊ PHỤC HỒI NHẦM KHI F5 TRANG) ---
+  private readonly PENDING_SYNC_KEY = 'ca_laivung_antt_pending_sync_v1';
+  private syncQueue: Promise<void> = Promise.resolve();
+
+  private enqueueSync(task: () => Promise<void>): Promise<void> {
+    this.syncQueue = this.syncQueue.then(task).catch(err => {
+      console.warn('Lỗi trong hàng đợi đồng bộ Supabase:', err);
+    });
+    return this.syncQueue;
+  }
+
+  private getPendingSync(): {
+    hardDeletedIds: string[];
+    softDeletedMap: Record<string, string>;
+    deletedTombstones: Record<string, string>;
+    softDeletedTombstones: Record<string, string>;
+    clearAllPending: boolean;
+  } {
     try {
-      const payload = Array.isArray(rows) ? rows : [rows];
-      if (payload.length === 0) return;
-      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
-      if (error) {
-        if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema cache')) {
-          this.notifyStatus(
-            'connected_missing_tables',
-            'Đã kết nối Supabase nhưng chưa khởi tạo bảng SQL'
-          );
-        } else {
-          console.warn(`Lỗi đồng bộ lên bảng Supabase [${table}]:`, error.message);
-        }
-      } else {
-        this.notifyStatus('connected_ready', 'Đã đồng bộ dữ liệu với đám mây Supabase');
+      const raw = localStorage.getItem(this.PENDING_SYNC_KEY);
+      if (!raw) {
+        return {
+          hardDeletedIds: [],
+          softDeletedMap: {},
+          deletedTombstones: {},
+          softDeletedTombstones: {},
+          clearAllPending: false,
+        };
       }
-    } catch (err) {
-      console.warn(`Lỗi kết nối mạng khi đồng bộ bảng [${table}]:`, err);
+      const parsed = JSON.parse(raw);
+      return {
+        hardDeletedIds: Array.isArray(parsed.hardDeletedIds) ? parsed.hardDeletedIds : [],
+        softDeletedMap:
+          parsed.softDeletedMap && typeof parsed.softDeletedMap === 'object' ? parsed.softDeletedMap : {},
+        deletedTombstones:
+          parsed.deletedTombstones && typeof parsed.deletedTombstones === 'object'
+            ? parsed.deletedTombstones
+            : {},
+        softDeletedTombstones:
+          parsed.softDeletedTombstones && typeof parsed.softDeletedTombstones === 'object'
+            ? parsed.softDeletedTombstones
+            : {},
+        clearAllPending: Boolean(parsed.clearAllPending),
+      };
+    } catch {
+      return {
+        hardDeletedIds: [],
+        softDeletedMap: {},
+        deletedTombstones: {},
+        softDeletedTombstones: {},
+        clearAllPending: false,
+      };
     }
   }
 
-  private async bgDelete(table: string, id: string): Promise<void> {
-    if (this.syncStatus === 'connected_missing_tables') return;
+  private savePendingSync(state: {
+    hardDeletedIds: string[];
+    softDeletedMap: Record<string, string>;
+    deletedTombstones: Record<string, string>;
+    softDeletedTombstones: Record<string, string>;
+    clearAllPending: boolean;
+  }): void {
     try {
-      const { error } = await supabase.from(table).delete().eq('id', id);
-      if (!error) {
-        this.notifyStatus('connected_ready', 'Đã đồng bộ xóa dữ liệu trên Supabase');
+      localStorage.setItem(this.PENDING_SYNC_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn('Không thể lưu trạng thái pending sync:', e);
+    }
+  }
+
+  private markPendingHardDelete(id: string): void {
+    const p = this.getPendingSync();
+    if (!p.hardDeletedIds.includes(id)) {
+      p.hardDeletedIds.push(id);
+    }
+    p.deletedTombstones[id] = new Date().toISOString();
+    delete p.softDeletedMap[id];
+    delete p.softDeletedTombstones[id];
+    this.savePendingSync(p);
+  }
+
+  private clearPendingHardDelete(id: string, removeTombstone = false): void {
+    const p = this.getPendingSync();
+    p.hardDeletedIds = p.hardDeletedIds.filter(x => x !== id);
+    if (removeTombstone) {
+      delete p.deletedTombstones[id];
+    }
+    this.savePendingSync(p);
+  }
+
+  private markPendingSoftDelete(id: string, deletedAt: string): void {
+    const p = this.getPendingSync();
+    p.softDeletedMap[id] = deletedAt;
+    p.softDeletedTombstones[id] = deletedAt;
+    this.savePendingSync(p);
+  }
+
+  private clearPendingSoftDelete(id: string, removeTombstone = false): void {
+    const p = this.getPendingSync();
+    delete p.softDeletedMap[id];
+    if (removeTombstone) {
+      delete p.softDeletedTombstones[id];
+    }
+    this.savePendingSync(p);
+  }
+
+  // --- BACKGROUND SYNC HELPERS ---
+  private bgUpsert(table: string, rows: any | any[]): Promise<void> {
+    if (this.syncStatus === 'connected_missing_tables') return Promise.resolve();
+    return this.enqueueSync(async () => {
+      try {
+        let payload = Array.isArray(rows) ? rows : [rows];
+        if (payload.length === 0) return;
+
+        // Bảo vệ chống ghi đè ngược bản ghi đã xóa khi ảnh chân dung lớn tải lên chậm hơn lệnh xóa
+        if (table === SUPABASE_TABLES.NHAN_SU) {
+          const pending = this.getPendingSync();
+          if (pending.clearAllPending) return;
+          payload = payload
+            .filter(r => !pending.hardDeletedIds.includes(r.id) && !pending.deletedTombstones[r.id])
+            .map(r => {
+              const softAt = pending.softDeletedMap[r.id] || pending.softDeletedTombstones[r.id];
+              if (softAt) {
+                return {
+                  ...r,
+                  trang_thai: 'da_xoa',
+                  updated_at: softAt,
+                  raw_data: r.raw_data ? { ...r.raw_data, trang_thai: 'da_xoa', deleted_at: softAt, updated_at: softAt } : r.raw_data,
+                };
+              }
+              return r;
+            });
+          if (payload.length === 0) return;
+        }
+
+        const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
+        if (error) {
+          if (
+            error.code === '42P01' ||
+            error.message?.includes('does not exist') ||
+            error.message?.includes('schema cache')
+          ) {
+            this.notifyStatus(
+              'connected_missing_tables',
+              'Đã kết nối Supabase nhưng chưa khởi tạo bảng SQL'
+            );
+          } else {
+            console.warn(`Lỗi đồng bộ lên bảng Supabase [${table}]:`, error.message);
+          }
+        } else {
+          this.notifyStatus('connected_ready', 'Đã đồng bộ dữ liệu với đám mây Supabase');
+        }
+      } catch (err) {
+        console.warn(`Lỗi kết nối mạng khi đồng bộ bảng [${table}]:`, err);
       }
-    } catch (err) {
-      console.warn(`Lỗi xóa bản ghi trên Supabase [${table}]:`, err);
+    });
+  }
+
+  private bgDelete(table: string, id: string): Promise<void> {
+    if (this.syncStatus === 'connected_missing_tables') return Promise.resolve();
+    return this.enqueueSync(async () => {
+      try {
+        const { error } = await supabase.from(table).delete().eq('id', id);
+        if (!error) {
+          if (table === SUPABASE_TABLES.NHAN_SU) {
+            this.clearPendingHardDelete(id, false);
+          }
+          this.notifyStatus('connected_ready', 'Đã đồng bộ xóa dữ liệu trên Supabase');
+        }
+      } catch (err) {
+        console.warn(`Lỗi xóa bản ghi trên Supabase [${table}]:`, err);
+      }
+    });
+  }
+
+  private async flushPendingSyncToSupabase(): Promise<void> {
+    await this.syncQueue;
+    const p = this.getPendingSync();
+    try {
+      if (p.clearAllPending) {
+        const { error } = await supabase.from(SUPABASE_TABLES.NHAN_SU).delete().neq('id', '__none__');
+        if (!error) {
+          p.clearAllPending = false;
+          p.hardDeletedIds = [];
+          p.softDeletedMap = {};
+          this.savePendingSync(p);
+        }
+      }
+
+      const allHardDeleteIds = Array.from(
+        new Set([...p.hardDeletedIds, ...Object.keys(p.deletedTombstones)])
+      );
+      if (allHardDeleteIds.length > 0) {
+        const { error } = await supabase
+          .from(SUPABASE_TABLES.NHAN_SU)
+          .delete()
+          .in('id', allHardDeleteIds);
+        if (!error) {
+          const current = this.getPendingSync();
+          current.hardDeletedIds = current.hardDeletedIds.filter(id => !allHardDeleteIds.includes(id));
+          this.savePendingSync(current);
+        }
+      }
+
+      const softEntries = Object.entries({ ...p.softDeletedTombstones, ...p.softDeletedMap });
+      if (softEntries.length > 0) {
+        const localRawList = this.getAllNhanSuRaw();
+        for (const [id, deletedAt] of softEntries) {
+          const localItem = localRawList.find(m => m.id === id);
+          const updatePayload: Record<string, any> = {
+            trang_thai: 'da_xoa',
+            updated_at: deletedAt,
+          };
+          if (localItem) {
+            updatePayload.raw_data = {
+              ...localItem,
+              trang_thai: 'da_xoa',
+              deleted_at: deletedAt,
+              updated_at: deletedAt,
+            };
+          }
+          const { error } = await supabase
+            .from(SUPABASE_TABLES.NHAN_SU)
+            .update(updatePayload)
+            .eq('id', id);
+          if (!error) {
+            this.clearPendingSoftDelete(id, false);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Lỗi đồng bộ các thao tác xóa đang chờ:', e);
     }
   }
 
@@ -1667,6 +1865,9 @@ class StorageService {
   }> {
     this.notifyStatus('syncing', 'Đang tải dữ liệu từ đám mây Supabase...');
     try {
+      // 1. Thực thi dứt điểm các thao tác xóa/cập nhật còn đang chờ (nếu người dùng vừa bấm Xóa rồi tải lại trang ngay)
+      await this.flushPendingSyncToSupabase();
+
       const { data: nsData, error: nsErr } = await supabase
         .from(SUPABASE_TABLES.NHAN_SU)
         .select('*')
@@ -1713,34 +1914,60 @@ class StorageService {
         supabase.from(SUPABASE_TABLES.AUDIT_LOGS).select('*').order('thoi_gian', { ascending: false }).limit(500),
       ]);
 
-      // Nếu bảng Địa bàn & Tổ ANTT trên Supabase đang trống (mới tạo bảng lần đầu),
-      // tự động đẩy dữ liệu mặc định (19 ấp, 19 tổ ANTT và dữ liệu hiện có ở máy) lên Supabase!
-      const isCloudBrandNew =
-        (!dbData || dbData.length === 0) &&
-        (!toData || toData.length === 0) &&
-        (!nsData || nsData.length === 0);
-
-      if (isCloudBrandNew) {
-        await this.pushAllToSupabase();
-        this.notifyStatus('connected_ready', 'Đã khởi tạo dữ liệu ban đầu lên Supabase');
-        return {
-          success: true,
-          message: 'Đã tự động đồng bộ danh mục 19 Ấp, 19 Tổ ANTT và dữ liệu hiện tại lên Supabase!',
-        };
-      }
-
+      // 2. Đồng bộ từng bảng danh mục độc lập (KHÔNG tự động đẩy lại nhan_su cũ từ localStorage khi bảng nhan_su trên Supabase đã xóa hết về 0)
       if (dbData && dbData.length > 0) {
         const list = dbData.map(r => this.fromDbRow<DiaBanAp>(r));
         localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+      } else {
+        void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, this.getDiaBanList().map(x => this.toDiaBanRow(x)));
       }
+
       if (toData && toData.length > 0) {
         const list = toData.map(r => this.fromDbRow<ToANTT>(r));
         localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+      } else {
+        void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, this.getToANTTList().map(x => this.toToANTTRow(x)));
       }
-      if (nsData) {
-        const list = nsData.map(r => this.fromDbRow<NhanSu>(r));
-        this.setNhanSuListLocalOnly(list);
+
+      if (nsData !== null && nsData !== undefined) {
+        const pending = this.getPendingSync();
+        if (pending.clearAllPending) {
+          this.setNhanSuListLocalOnly([]);
+        } else {
+          const orphanZombieIds: string[] = [];
+          const list = nsData
+            .map(r => this.fromDbRow<NhanSu>(r))
+            .filter(item => {
+              const isHardDeleted =
+                pending.hardDeletedIds.includes(item.id) || Boolean(pending.deletedTombstones[item.id]);
+              if (isHardDeleted) {
+                orphanZombieIds.push(item.id);
+                return false;
+              }
+              return true;
+            })
+            .map(item => {
+              const softDeletedAt =
+                pending.softDeletedMap[item.id] || pending.softDeletedTombstones[item.id];
+              if (softDeletedAt) {
+                return {
+                  ...item,
+                  trang_thai: 'da_xoa' as const,
+                  deleted_at: softDeletedAt,
+                  updated_at: softDeletedAt,
+                };
+              }
+              return item;
+            });
+
+          if (orphanZombieIds.length > 0) {
+            void supabase.from(SUPABASE_TABLES.NHAN_SU).delete().in('id', orphanZombieIds);
+          }
+
+          this.setNhanSuListLocalOnly(list);
+        }
       }
+
       if (ttData && ttData.length > 0) {
         const list = ttData.map(r => this.fromDbRow<NhatKyTuanTra>(r));
         localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(list));
@@ -1756,6 +1983,8 @@ class StorageService {
       if (usrData && usrData.length > 0) {
         const list = usrData.map(r => this.fromDbRow<UserAccount>(r));
         localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+      } else {
+        void this.bgUpsert(SUPABASE_TABLES.USERS, this.getUsers().map(x => this.toUserRow(x)));
       }
       if (logData && logData.length > 0) {
         const list = logData.map(r => this.fromDbRow<AuditLog>(r));
@@ -1767,7 +1996,7 @@ class StorageService {
 
       return {
         success: true,
-        message: `Đã tải thành công dữ liệu từ Supabase (${nsData?.length || 0} hồ sơ nhân sự, ${dbData?.length || 0} ấp, ${toData?.length || 0} tổ ANTT).`,
+        message: `Đã tải thành công dữ liệu từ Supabase (${nsData?.length || 0} hồ sơ nhân sự, ${dbData?.length || 19} ấp, ${toData?.length || 19} tổ ANTT).`,
       };
     } catch (err: any) {
       const msg = err?.message || 'Lỗi mạng khi tải dữ liệu từ Supabase';
@@ -2153,6 +2382,8 @@ class StorageService {
       list.push(savedItem);
     }
 
+    this.clearPendingHardDelete(savedItem.id, true);
+    this.clearPendingSoftDelete(savedItem.id, true);
     this.setNhanSuListLocalOnly(list);
     void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(savedItem));
     return { success: true };
@@ -2162,11 +2393,32 @@ class StorageService {
     const list = this.getAllNhanSuRaw();
     const index = list.findIndex(i => i.id === id);
     if (index >= 0) {
+      const now = new Date().toISOString();
       list[index].trang_thai = 'da_xoa';
-      list[index].deleted_at = new Date().toISOString();
-      list[index].updated_at = new Date().toISOString();
+      list[index].deleted_at = now;
+      list[index].updated_at = now;
+      this.markPendingSoftDelete(id, now);
       this.setNhanSuListLocalOnly(list);
-      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
+
+      const updatedItem = { ...list[index] };
+      void this.enqueueSync(async () => {
+        try {
+          const { error } = await supabase
+            .from(SUPABASE_TABLES.NHAN_SU)
+            .update({
+              trang_thai: 'da_xoa',
+              updated_at: now,
+              raw_data: updatedItem,
+            })
+            .eq('id', id);
+          if (!error) {
+            this.clearPendingSoftDelete(id, false);
+            this.notifyStatus('connected_ready', 'Đã đồng bộ xóa mềm lên Supabase');
+          }
+        } catch (err) {
+          console.warn('Lỗi đồng bộ xóa mềm lên Supabase:', err);
+        }
+      });
       return true;
     }
     return false;
@@ -2176,9 +2428,12 @@ class StorageService {
     const list = this.getAllNhanSuRaw();
     const index = list.findIndex(i => i.id === id);
     if (index >= 0) {
+      const now = new Date().toISOString();
       list[index].trang_thai = 'dang_hoat_dong';
       delete list[index].deleted_at;
-      list[index].updated_at = new Date().toISOString();
+      list[index].updated_at = now;
+      this.clearPendingSoftDelete(id, true);
+      this.clearPendingHardDelete(id, true);
       this.setNhanSuListLocalOnly(list);
       void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
       return true;
@@ -2187,6 +2442,7 @@ class StorageService {
   }
 
   permanentDeleteNhanSu(id: string): boolean {
+    this.markPendingHardDelete(id);
     const list = this.getAllNhanSuRaw().filter(i => i.id !== id);
     this.setNhanSuListLocalOnly(list);
     void this.bgDelete(SUPABASE_TABLES.NHAN_SU, id);
@@ -2239,6 +2495,8 @@ class StorageService {
         trang_thai: 'dang_hoat_dong',
         updated_at: now,
       };
+      this.clearPendingSoftDelete(id, true);
+      this.clearPendingHardDelete(id, true);
       this.setNhanSuListLocalOnly(list);
       void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
 
@@ -2349,6 +2607,10 @@ class StorageService {
   }
 
   bulkSaveMembers(items: NhanSu[]): void {
+    items.forEach(item => {
+      this.clearPendingHardDelete(item.id, true);
+      this.clearPendingSoftDelete(item.id, true);
+    });
     const current = this.getAllNhanSuRaw();
     const merged = [...items, ...current.filter(c => !items.some(i => i.id === c.id))];
     this.setNhanSuListLocalOnly(merged);
@@ -2612,6 +2874,13 @@ class StorageService {
         return { success: false, message: 'Tệp sao lưu không đúng cấu trúc hệ thống Công an xã Lai Vung!' };
       }
 
+      this.savePendingSync({
+        hardDeletedIds: [],
+        softDeletedMap: {},
+        deletedTombstones: {},
+        softDeletedTombstones: {},
+        clearAllPending: false,
+      });
       if (parsed.data.users) this.setUsers(parsed.data.users);
       if (parsed.data.dia_ban) this.setDiaBanList(parsed.data.dia_ban);
       if (parsed.data.to_antt) this.setToANTTList(parsed.data.to_antt);
@@ -2645,6 +2914,13 @@ class StorageService {
   }
 
   resetToDemoData(): void {
+    this.savePendingSync({
+      hardDeletedIds: [],
+      softDeletedMap: {},
+      deletedTombstones: {},
+      softDeletedTombstones: {},
+      clearAllPending: false,
+    });
     this.setUsers(INITIAL_USERS);
     this.setDiaBanList(INITIAL_DIA_BAN);
     this.setToANTTList(INITIAL_TO_ANTT);
@@ -2656,14 +2932,27 @@ class StorageService {
   }
 
   clearAllData(user?: UserAccount): void {
+    const p = this.getPendingSync();
+    p.clearAllPending = true;
+    this.savePendingSync(p);
     this.setNhanSuListLocalOnly([]);
-    void (async () => {
+    void this.enqueueSync(async () => {
       try {
-        await supabase.from(SUPABASE_TABLES.NHAN_SU).delete().neq('id', '__none__');
+        const { error } = await supabase.from(SUPABASE_TABLES.NHAN_SU).delete().neq('id', '__none__');
+        if (!error) {
+          this.savePendingSync({
+            hardDeletedIds: [],
+            softDeletedMap: {},
+            deletedTombstones: {},
+            softDeletedTombstones: {},
+            clearAllPending: false,
+          });
+          this.notifyStatus('connected_ready', 'Đã xóa sạch dữ liệu nhân sự trên Supabase');
+        }
       } catch (e) {
         console.warn('Lỗi xóa sạch bảng nhan_su trên Supabase:', e);
       }
-    })();
+    });
     const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
     this.addAuditLog(
       currentUser,
@@ -2675,4 +2964,5 @@ class StorageService {
 }
 
 export const storageService = new StorageService();
+
 

@@ -6,9 +6,11 @@ interface ConfirmModalProps {
   title: string;
   message: string;
   confirmLabel?: string;
+  secondaryConfirmLabel?: string;
   cancelLabel?: string;
   variant?: 'danger' | 'warning' | 'primary';
   onConfirm: () => void;
+  onSecondaryConfirm?: () => void;
   onCancel: () => void;
 }
 
@@ -17,9 +19,11 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   title,
   message,
   confirmLabel = 'Xác nhận',
+  secondaryConfirmLabel,
   cancelLabel = 'Hủy bỏ',
   variant = 'danger',
   onConfirm,
+  onSecondaryConfirm,
   onCancel,
 }) => {
   if (!isOpen) return null;
@@ -60,7 +64,7 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           </div>
         </div>
 
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-3">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2.5">
           <button
             type="button"
             id="btn-cancel-modal"
@@ -69,6 +73,16 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
           >
             {cancelLabel}
           </button>
+          {secondaryConfirmLabel && onSecondaryConfirm && (
+            <button
+              type="button"
+              id="btn-secondary-confirm-modal"
+              onClick={onSecondaryConfirm}
+              className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-sm transition"
+            >
+              {secondaryConfirmLabel}
+            </button>
+          )}
           <button
             type="button"
             id="btn-confirm-modal"

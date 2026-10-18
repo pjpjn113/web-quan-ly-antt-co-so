@@ -64,8 +64,11 @@ export default function App() {
     isOpen: boolean;
     title: string;
     message: string;
+    confirmLabel?: string;
+    secondaryConfirmLabel?: string;
     variant?: 'danger' | 'warning' | 'primary';
     onConfirm: () => void;
+    onSecondaryConfirm?: () => void;
   }>({
     isOpen: false,
     title: '',
@@ -86,6 +89,9 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+    const unsub = storageService.subscribeDataRefresh(loadData);
+    void storageService.pullFromSupabase();
+    return unsub;
   }, [loadData]);
 
   // Toast Helper
@@ -166,12 +172,14 @@ export default function App() {
     );
   };
 
-  // Soft Delete Member
+  // Delete Member (offers both Soft Delete to Trash and Permanent Delete from Supabase)
   const handleDeleteMember = (member: NhanSu) => {
     setConfirmModal({
       isOpen: true,
-      title: 'Xác nhận xóa mềm hồ sơ nhân sự',
-      message: `Bạn có chắc chắn muốn chuyển hồ sơ đồng chí "${member.ho_ten}" (${member.ma_nhan_su}) vào Thùng rác tạm thời?\n\nHồ sơ sẽ không còn xuất hiện trong báo cáo quân số nhưng vẫn có thể khôi phục lại bất kỳ lúc nào từ mục Thùng rác.`,
+      title: 'Xác nhận xóa hồ sơ nhân sự',
+      message: `Bạn muốn xử lý hồ sơ đồng chí "${member.ho_ten}" (${member.ma_nhan_su}) như thế nào?\n\n• Chuyển vào Thùng rác: Ẩn khỏi danh sách quân số nhưng có thể khôi phục lại.\n• Xóa vĩnh viễn: Xóa hoàn toàn khỏi trang web và cơ sở dữ liệu Supabase.`,
+      confirmLabel: 'Chuyển vào Thùng rác',
+      secondaryConfirmLabel: 'Xóa vĩnh viễn',
       variant: 'warning',
       onConfirm: () => {
         if (!currentUser) return;
@@ -184,7 +192,20 @@ export default function App() {
         );
         loadData();
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
-        showToast('Đã xóa mềm', `Hồ sơ ${member.ho_ten} đã được chuyển vào Thùng rác.`, 'warning');
+        showToast('Đã chuyển vào Thùng rác', `Hồ sơ ${member.ho_ten} đã được chuyển vào Thùng rác.`, 'warning');
+      },
+      onSecondaryConfirm: () => {
+        if (!currentUser) return;
+        storageService.permanentDeleteMember(member.id);
+        storageService.addAuditLog(
+          currentUser,
+          'XOA_VINH_VIEN',
+          `Hồ sơ: ${member.ho_ten} (${member.ma_nhan_su})`,
+          'Xóa vĩnh viễn hồ sơ khỏi hệ thống và Supabase'
+        );
+        loadData();
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        showToast('Đã xóa vĩnh viễn', `Hồ sơ ${member.ho_ten} đã được xóa hoàn toàn khỏi hệ thống và Supabase.`, 'error');
       },
     });
   };
@@ -363,9 +384,20 @@ export default function App() {
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
         message={confirmModal.message}
+        confirmLabel={confirmModal.confirmLabel}
+        secondaryConfirmLabel={confirmModal.secondaryConfirmLabel}
         variant={confirmModal.variant}
         onConfirm={confirmModal.onConfirm}
-        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onSecondaryConfirm={confirmModal.onSecondaryConfirm}
+        onCancel={() =>
+          setConfirmModal(prev => ({
+            ...prev,
+            isOpen: false,
+            confirmLabel: undefined,
+            secondaryConfirmLabel: undefined,
+            onSecondaryConfirm: undefined,
+          }))
+        }
       />
 
       {/* Member Form Modal (Add / Edit) */}
