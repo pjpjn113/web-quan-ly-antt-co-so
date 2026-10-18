@@ -32,8 +32,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   toANTTList,
   onNavigateWithFilter,
 }) => {
-  // Chỉ tính các thành viên đang hoạt động (loại trừ đã xóa mềm)
-  const activeMembers = members.filter(m => m.trang_thai !== 'da_xoa');
+  // Chỉ tính các thành viên đang hoạt động công tác (loại trừ đã xóa mềm và đã thôi việc)
+  const activeMembers = members.filter(m => m.trang_thai === 'dang_hoat_dong');
+  const dismissedMembers = members.filter(m => m.trang_thai === 'da_thoi_viec');
   const totalCount = activeMembers.length;
 
   // Giới tính

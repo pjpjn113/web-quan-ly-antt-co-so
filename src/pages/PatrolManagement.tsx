@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { NhatKyTuanTra, CaTuanTra, NhanSu, DiaBanAp, UserAccount } from '../types';
 import { storageService } from '../services/storage';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface PatrolManagementProps {
   currentUser: UserAccount;
@@ -46,6 +47,7 @@ export const PatrolManagement: React.FC<PatrolManagementProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<NhatKyTuanTra | null>(null);
   const [viewingItem, setViewingItem] = useState<NhatKyTuanTra | null>(null);
+  const [deletingItem, setDeletingItem] = useState<NhatKyTuanTra | null>(null);
 
   // Form State
   const todayStr = new Date().toISOString().split('T')[0];
@@ -172,16 +174,20 @@ export const PatrolManagement: React.FC<PatrolManagementProps> = ({
   };
 
   const handleDelete = (item: NhatKyTuanTra) => {
-    if (!window.confirm(`Xác nhận xóa nhật ký tuần tra ngày ${item.ngay_tuan_tra} (${item.ca_tuan_tra})?`)) {
-      return;
-    }
-    storageService.deleteNhatKyTuanTra(item.id, currentUser);
+    setDeletingItem(item);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deletingItem) return;
+    const dateStr = deletingItem.ngay_tuan_tra;
+    storageService.deleteNhatKyTuanTra(deletingItem.id, currentUser);
+    setDeletingItem(null);
     reloadData();
     if (onShowToast) {
       onShowToast({
         type: 'info',
         title: 'Đã xóa nhật ký tuần tra',
-        message: `Đã xóa nhật ký ngày ${item.ngay_tuan_tra} khỏi hệ thống.`,
+        message: `Đã xóa nhật ký ngày ${dateStr} khỏi hệ thống và Supabase.`,
       });
     }
   };
@@ -190,7 +196,13 @@ export const PatrolManagement: React.FC<PatrolManagementProps> = ({
     e.preventDefault();
 
     if (!formData.ngay_tuan_tra) {
-      alert('Vui lòng chọn ngày tuần tra');
+      if (onShowToast) {
+        onShowToast({
+          type: 'warning',
+          title: 'Thiếu thông tin bắt buộc',
+          message: 'Vui lòng chọn ngày tuần tra!',
+        });
+      }
       return;
     }
 
@@ -198,7 +210,13 @@ export const PatrolManagement: React.FC<PatrolManagementProps> = ({
     const covertCount = Math.max(0, Number(formData.so_cuoc_mat_phuc) || 0);
 
     if (publicCount === 0 && covertCount === 0) {
-      alert('Vui lòng nhập ít nhất 1 cuộc tuần tra (công khai hoặc mật phục)');
+      if (onShowToast) {
+        onShowToast({
+          type: 'warning',
+          title: 'Thiếu thông tin cuộc tuần tra',
+          message: 'Vui lòng nhập ít nhất 1 cuộc tuần tra (công khai hoặc mật phục)!',
+        });
+      }
       return;
     }
 
@@ -1066,6 +1084,17 @@ export const PatrolManagement: React.FC<PatrolManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal xác nhận xóa nhật ký tuần tra */}
+      <ConfirmModal
+        isOpen={!!deletingItem}
+        title="Xác nhận xóa nhật ký tuần tra"
+        message={`Đồng chí có chắc chắn muốn xóa nhật ký ca tuần tra ngày "${deletingItem?.ngay_tuan_tra}" (${deletingItem?.ca_tuan_tra}) khỏi hệ thống và Supabase không?`}
+        confirmLabel="Xác nhận xóa"
+        variant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingItem(null)}
+      />
     </div>
   );
 };

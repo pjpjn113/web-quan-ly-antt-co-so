@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { HoSoKhenThuong, LoaiKhenThuong, CapKhenThuong, NhanSu, UserAccount } from '../types';
 import { storageService } from '../services/storage';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface AwardsManagementProps {
   currentUser: UserAccount;
@@ -44,6 +45,7 @@ export const AwardsManagement: React.FC<AwardsManagementProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<HoSoKhenThuong | null>(null);
   const [viewingItem, setViewingItem] = useState<HoSoKhenThuong | null>(null);
+  const [deletingItem, setDeletingItem] = useState<HoSoKhenThuong | null>(null);
 
   // Form State
   const todayStr = new Date().toISOString().split('T')[0];
@@ -169,16 +171,20 @@ export const AwardsManagement: React.FC<AwardsManagementProps> = ({
   };
 
   const handleDelete = (item: HoSoKhenThuong) => {
-    if (!window.confirm(`Xác nhận xóa hồ sơ khen thưởng số: "${item.so_quyet_dinh}"?`)) {
-      return;
-    }
-    storageService.deleteHoSoKhenThuong(item.id, currentUser);
+    setDeletingItem(item);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deletingItem) return;
+    const soQD = deletingItem.so_quyet_dinh;
+    storageService.deleteHoSoKhenThuong(deletingItem.id, currentUser);
+    setDeletingItem(null);
     reloadData();
     if (onShowToast) {
       onShowToast({
         type: 'info',
         title: 'Đã xóa hồ sơ khen thưởng',
-        message: `Đã xóa quyết định ${item.so_quyet_dinh} khỏi hệ thống.`,
+        message: `Đã xóa quyết định ${soQD} khỏi hệ thống và Supabase.`,
       });
     }
   };
@@ -187,7 +193,13 @@ export const AwardsManagement: React.FC<AwardsManagementProps> = ({
     e.preventDefault();
 
     if (!formData.so_quyet_dinh?.trim()) {
-      alert('Vui lòng nhập số quyết định khen thưởng');
+      if (onShowToast) {
+        onShowToast({
+          type: 'warning',
+          title: 'Thiếu thông tin bắt buộc',
+          message: 'Vui lòng nhập số quyết định khen thưởng!',
+        });
+      }
       return;
     }
 
@@ -962,6 +974,17 @@ export const AwardsManagement: React.FC<AwardsManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal xác nhận xóa hồ sơ khen thưởng */}
+      <ConfirmModal
+        isOpen={!!deletingItem}
+        title="Xác nhận xóa hồ sơ khen thưởng"
+        message={`Đồng chí có chắc chắn muốn xóa quyết định khen thưởng số "${deletingItem?.so_quyet_dinh}" (${deletingItem?.ten_nguoi_khen_thuong || 'Tập thể'}) khỏi hệ thống và Supabase không?`}
+        confirmLabel="Xác nhận xóa"
+        variant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingItem(null)}
+      />
     </div>
   );
 };

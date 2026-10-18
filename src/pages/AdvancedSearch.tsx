@@ -34,6 +34,7 @@ export const AdvancedSearch: React.FC<AdvancedSearchProps> = ({
   const [chuyenMon, setChuyenMon] = useState('all');
   const [kiemNhiem, setKiemNhiem] = useState('all');
   const [thamNien, setThamNien] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'dang_hoat_dong' | 'da_thoi_viec'>('all');
 
   const apMap = new Map(diaBanList.map(a => [a.id, a.ten_ap]));
   const toMap = new Map(toANTTList.map(t => [t.id, t.ten_to]));
@@ -42,6 +43,7 @@ export const AdvancedSearch: React.FC<AdvancedSearchProps> = ({
   const results = members
     .filter(m => m.trang_thai !== 'da_xoa')
     .filter(m => {
+      if (statusFilter !== 'all' && m.trang_thai !== statusFilter) return false;
       if (keyword.trim()) {
         const q = keyword.toLowerCase().trim();
         const match = 

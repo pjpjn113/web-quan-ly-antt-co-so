@@ -94,7 +94,7 @@ export const Teams: React.FC<TeamsProps> = ({
       {/* Grid of Teams */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {toANTTList.map(to => {
-          const teamMembers = members.filter(m => m.to_antt_id === to.id && m.trang_thai !== 'da_xoa');
+          const teamMembers = members.filter(m => m.to_antt_id === to.id && m.trang_thai === 'dang_hoat_dong');
           const toTruong = teamMembers.find(m => m.chuc_vu === 'Tổ trưởng');
           const toPho = teamMembers.find(m => m.chuc_vu === 'Tổ phó');
           const thanhVien = teamMembers.filter(m => m.chuc_vu === 'Thành viên');

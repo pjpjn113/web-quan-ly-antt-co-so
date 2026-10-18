@@ -162,7 +162,7 @@ export const Territories: React.FC<TerritoriesProps> = ({
       {/* Grid Cards of Territories */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredDiaBan.map(ap => {
-          const apMembers = members.filter(m => m.ap_id === ap.id && m.trang_thai !== 'da_xoa');
+          const apMembers = members.filter(m => m.ap_id === ap.id && m.trang_thai === 'dang_hoat_dong');
           const toTruong = apMembers.find(m => m.chuc_vu === 'Tổ trưởng');
 
           return (

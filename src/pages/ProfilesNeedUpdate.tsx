@@ -22,9 +22,9 @@ export const ProfilesNeedUpdate: React.FC<ProfilesNeedUpdateProps> = ({
   const apMap = new Map(diaBanList.map(a => [a.id, a.ten_ap]));
   const toMap = new Map(toANTTList.map(t => [t.id, t.ten_to]));
 
-  // Lọc các thành viên có trường còn thiếu
+  // Lọc các thành viên đang hoạt động có trường còn thiếu
   const needUpdateList = members
-    .filter(m => m.trang_thai !== 'da_xoa')
+    .filter(m => m.trang_thai === 'dang_hoat_dong')
     .map(m => {
       const missing = findMissingFields(m);
       return { member: m, missing };

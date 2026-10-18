@@ -256,17 +256,16 @@ export default function App() {
       variant: 'danger',
       onConfirm: () => {
         if (!currentUser) return;
-        const deleted = members.filter(m => m.trang_thai === 'da_xoa');
-        deleted.forEach(m => storageService.permanentDeleteMember(m.id));
+        const deletedCount = storageService.emptyTrash();
         storageService.addAuditLog(
           currentUser,
           'XOA_VINH_VIEN',
           'Toàn bộ thùng rác',
-          `Xóa sạch ${deleted.length} hồ sơ trong thùng rác`
+          `Xóa sạch ${deletedCount} hồ sơ trong thùng rác`
         );
         loadData();
         setConfirmModal(prev => ({ ...prev, isOpen: false }));
-        showToast('Đã dọn sạch thùng rác', `Đã xóa vĩnh viễn ${deleted.length} hồ sơ.`, 'info');
+        showToast('Đã dọn sạch thùng rác', `Đã xóa vĩnh viễn ${deletedCount} hồ sơ khỏi hệ thống và Supabase.`, 'info');
       },
     });
   };

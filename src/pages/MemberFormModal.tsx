@@ -71,9 +71,9 @@ export const MemberFormModal: React.FC<MemberFormModalProps> = ({
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        // Tỷ lệ chuẩn 4x6 (2:3) -> 400px x 600px
-        const targetWidth = 400;
-        const targetHeight = 600;
+        // Tỷ lệ chuẩn 4x6 (2:3) -> 320px x 480px tối ưu tốc độ tải và lưu trữ đám mây
+        const targetWidth = 320;
+        const targetHeight = 480;
         const canvas = document.createElement('canvas');
         canvas.width = targetWidth;
         canvas.height = targetHeight;
@@ -101,7 +101,7 @@ export const MemberFormModal: React.FC<MemberFormModalProps> = ({
           ctx.fillRect(0, 0, targetWidth, targetHeight);
           ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetWidth, targetHeight);
 
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.80);
           setFormData(prev => ({ ...prev, anh_chan_dung: dataUrl }));
           setErrorMessage('');
         }

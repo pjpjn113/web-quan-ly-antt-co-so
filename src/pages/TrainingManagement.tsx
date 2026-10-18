@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { DotTapHuan, NhanSu, UserAccount } from '../types';
 import { storageService } from '../services/storage';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface TrainingManagementProps {
   currentUser: UserAccount;
@@ -44,6 +45,7 @@ export const TrainingManagement: React.FC<TrainingManagementProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<DotTapHuan | null>(null);
   const [viewingItem, setViewingItem] = useState<DotTapHuan | null>(null);
+  const [deletingItem, setDeletingItem] = useState<DotTapHuan | null>(null);
 
   // Form State
   const todayStr = new Date().toISOString().split('T')[0];
@@ -163,16 +165,20 @@ export const TrainingManagement: React.FC<TrainingManagementProps> = ({
   };
 
   const handleDelete = (item: DotTapHuan) => {
-    if (!window.confirm(`Xác nhận xóa đợt tập huấn: "${item.ten_dot}"?`)) {
-      return;
-    }
-    storageService.deleteDotTapHuan(item.id, currentUser);
+    setDeletingItem(item);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deletingItem) return;
+    const dotName = deletingItem.ten_dot;
+    storageService.deleteDotTapHuan(deletingItem.id, currentUser);
+    setDeletingItem(null);
     reloadData();
     if (onShowToast) {
       onShowToast({
         type: 'info',
         title: 'Đã xóa đợt tập huấn',
-        message: `Đã xóa hồ sơ đợt tập huấn "${item.ten_dot}".`,
+        message: `Đã xóa hồ sơ đợt tập huấn "${dotName}" khỏi hệ thống và Supabase.`,
       });
     }
   };
@@ -181,7 +187,13 @@ export const TrainingManagement: React.FC<TrainingManagementProps> = ({
     e.preventDefault();
 
     if (!formData.ten_dot?.trim()) {
-      alert('Vui lòng nhập tên đợt tập huấn');
+      if (onShowToast) {
+        onShowToast({
+          type: 'warning',
+          title: 'Thiếu thông tin bắt buộc',
+          message: 'Vui lòng nhập tên đợt tập huấn!',
+        });
+      }
       return;
     }
 
@@ -994,6 +1006,17 @@ export const TrainingManagement: React.FC<TrainingManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal xác nhận xóa đợt tập huấn */}
+      <ConfirmModal
+        isOpen={!!deletingItem}
+        title="Xác nhận xóa đợt tập huấn"
+        message={`Đồng chí có chắc chắn muốn xóa hồ sơ đợt tập huấn "${deletingItem?.ten_dot}" khỏi hệ thống và Supabase không?`}
+        confirmLabel="Xác nhận xóa"
+        variant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingItem(null)}
+      />
     </div>
   );
 };

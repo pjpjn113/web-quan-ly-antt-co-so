@@ -39,6 +39,7 @@ import { MemberFilterStats } from '../components/members/MemberFilterStats';
 import { MemberSummaryModal } from '../components/members/MemberSummaryModal';
 import { DismissMemberModal } from '../components/members/DismissMemberModal';
 import { DismissalDecisionModal } from '../components/members/DismissalDecisionModal';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 import { storageService } from '../services/storage';
 import { excelService } from '../services/excelService';
 
@@ -94,6 +95,9 @@ export const Members: React.FC<MembersProps> = ({
   // Modal xem trích lục Quyết định thôi việc
   const [decisionModalOpen, setDecisionModalOpen] = useState(false);
   const [decisionMember, setDecisionMember] = useState<NhanSu | null>(null);
+
+  // Modal xác nhận khôi phục thành viên đã thôi việc
+  const [reactivatingMember, setReactivatingMember] = useState<NhanSu | null>(null);
   // Lọc và tìm kiếm
   const [searchTerm, setSearchTerm] = useState(initialFilter?.searchQuery || '');
   const [selectedAp, setSelectedAp] = useState(initialFilter?.ap_id || 'all');
@@ -159,18 +163,23 @@ export const Members: React.FC<MembersProps> = ({
   };
 
   const handleReactivate = (member: NhanSu) => {
-    if (window.confirm(`Xác nhận khôi phục đồng chí "${member.ho_ten}" (${member.ma_nhan_su}) trở lại danh sách đang hoạt động lực lượng ANTT cơ sở?`)) {
-      storageService.reactivateMember(member.id, currentUser);
-      if (onReloadData) {
-        onReloadData();
-      }
-      if (onShowToast) {
-        onShowToast(
-          'Khôi phục hoạt động thành công',
-          `Đồng chí ${member.ho_ten} đã được chuyển về trạng thái đang hoạt động.`,
-          'success'
-        );
-      }
+    setReactivatingMember(member);
+  };
+
+  const handleConfirmReactivate = () => {
+    if (!reactivatingMember) return;
+    const memberName = reactivatingMember.ho_ten;
+    storageService.reactivateMember(reactivatingMember.id, currentUser);
+    setReactivatingMember(null);
+    if (onReloadData) {
+      onReloadData();
+    }
+    if (onShowToast) {
+      onShowToast(
+        'Khôi phục hoạt động thành công',
+        `Đồng chí ${memberName} đã được chuyển về trạng thái đang hoạt động.`,
+        'success'
+      );
     }
   };
 
@@ -870,7 +879,7 @@ export const Members: React.FC<MembersProps> = ({
               {paginatedMembers.length === 0 ? (
                 <tr>
                   <td colSpan={statusTab === 'da_thoi_viec' ? 11 : 13} className="py-10 text-center text-slate-400">
-                    {statusCounts.dang_hoat_dong === 0 && statusCounts.da_thoi_viec === 0 ? (
+                    {activeWorkingMembers.length === 0 && dismissedMembers.length === 0 ? (
                       <div className="max-w-lg mx-auto py-6 px-4 flex flex-col items-center justify-center text-center">
                         <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center mb-3">
                           <Users className="w-7 h-7" />
@@ -1430,6 +1439,17 @@ export const Members: React.FC<MembersProps> = ({
           setDismissingMember(m);
           setDismissModalOpen(true);
         }}
+      />
+
+      {/* Modal Xác nhận Khôi phục thành viên */}
+      <ConfirmModal
+        isOpen={!!reactivatingMember}
+        title="Xác nhận khôi phục thành viên"
+        message={`Đồng chí có chắc chắn muốn khôi phục đồng chí "${reactivatingMember?.ho_ten}" (${reactivatingMember?.ma_nhan_su}) trở lại danh sách đang hoạt động lực lượng ANTT cơ sở xã Lai Vung?`}
+        confirmLabel="Khôi phục hoạt động"
+        variant="primary"
+        onConfirm={handleConfirmReactivate}
+        onCancel={() => setReactivatingMember(null)}
       />
     </div>
   );

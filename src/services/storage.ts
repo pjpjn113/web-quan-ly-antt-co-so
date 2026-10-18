@@ -2449,6 +2449,28 @@ class StorageService {
     return true;
   }
 
+  emptyTrash(): number {
+    const list = this.getAllNhanSuRaw();
+    const deleted = list.filter(i => i.trang_thai === 'da_xoa');
+    if (deleted.length === 0) return 0;
+    const deletedIds = deleted.map(i => i.id);
+    deletedIds.forEach(id => this.markPendingHardDelete(id));
+    const remaining = list.filter(i => i.trang_thai !== 'da_xoa');
+    this.setNhanSuListLocalOnly(remaining);
+    void this.enqueueSync(async () => {
+      try {
+        const { error } = await supabase.from(SUPABASE_TABLES.NHAN_SU).delete().in('id', deletedIds);
+        if (!error) {
+          deletedIds.forEach(id => this.clearPendingHardDelete(id, false));
+          this.notifyStatus('connected_ready', `Đã dọn sạch ${deletedIds.length} hồ sơ trên Supabase`);
+        }
+      } catch (err) {
+        console.warn('Lỗi dọn sạch thùng rác trên Supabase:', err);
+      }
+    });
+    return deletedIds.length;
+  }
+
   // --- QUYẾT ĐỊNH CHO THÔI THAM GIA LỰC LƯỢNG ANTT CƠ SỞ (UBND CẤP XÃ) ---
   dismissNhanSu(id: string, data: DismissMemberData, currentUser?: UserAccount): boolean {
     const list = this.getAllNhanSuRaw();
