@@ -1,0 +1,7 @@
+{
+  "name": "Quản Lý Thành Viên ANTT Cơ Sở – Công An Xã Lai Vung",
+  "description": "Hệ thống quản lý dữ liệu thành viên lực lượng tham gia bảo vệ an ninh, trật tự ở cơ sở – Công an xã Lai Vung",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
