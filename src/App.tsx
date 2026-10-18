@@ -443,6 +443,7 @@ export default function App() {
         onLogout={handleLogout}
         onToggleSidebar={() => setIsOpenMobile(prev => !prev)}
         needUpdateCount={needUpdateCount}
+        onOpenSupabaseConfig={() => setCurrentTab('backup')}
       />
 
       {/* Main Layout Container */}

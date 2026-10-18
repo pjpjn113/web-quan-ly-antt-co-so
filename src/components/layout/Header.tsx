@@ -1,31 +1,46 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Shield, 
   User, 
   LogOut, 
   Menu, 
-  AlertCircle, 
   Clock, 
   ShieldCheck, 
-  Eye
+  Eye,
+  Cloud,
+  RefreshCw,
+  AlertTriangle
 } from 'lucide-react';
 import { UserAccount } from '../../types';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 import { formatDateTimeVN } from '../../utils/helpers';
+import { storageService, SupabaseSyncStatus } from '../../services/storage';
 
 interface HeaderProps {
   currentUser: UserAccount;
   onLogout: () => void;
   onToggleSidebar: () => void;
   needUpdateCount?: number;
+  onOpenSupabaseConfig?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
   onLogout,
   onToggleSidebar,
-  needUpdateCount = 0,
+  onOpenSupabaseConfig,
 }) => {
+  const [syncStatus, setSyncStatus] = useState<SupabaseSyncStatus>('checking');
+  const [syncMessage, setSyncMessage] = useState<string>('Đang kết nối Supabase...');
+
+  useEffect(() => {
+    const unsubscribe = storageService.subscribeSyncStatus((status, message) => {
+      setSyncStatus(status);
+      setSyncMessage(message);
+    });
+    return unsubscribe;
+  }, []);
+
   const getRoleBadge = (role: string) => {
     switch (role) {
       case 'ADMIN':
@@ -50,6 +65,63 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         );
     }
+  };
+
+  const renderSupabaseBadge = () => {
+    if (syncStatus === 'connected_ready') {
+      return (
+        <button
+          type="button"
+          onClick={onOpenSupabaseConfig}
+          title={syncMessage}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-bold transition cursor-pointer"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="hidden md:inline">Supabase: Đã kết nối</span>
+        </button>
+      );
+    }
+
+    if (syncStatus === 'connected_missing_tables') {
+      return (
+        <button
+          type="button"
+          onClick={onOpenSupabaseConfig}
+          title="Nhấn vào đây để lấy mã lệnh SQL khởi tạo bảng trên Supabase"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-amber-300 text-[11px] font-bold transition cursor-pointer"
+        >
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="hidden sm:inline">Supabase: Cần tạo bảng SQL</span>
+        </button>
+      );
+    }
+
+    if (syncStatus === 'checking' || syncStatus === 'syncing') {
+      return (
+        <button
+          type="button"
+          onClick={onOpenSupabaseConfig}
+          title={syncMessage}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-500/15 border border-sky-400/40 text-sky-300 text-[11px] font-bold transition cursor-pointer"
+        >
+          <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin" />
+          <span className="hidden md:inline">Supabase: Đang đồng bộ...</span>
+        </button>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        onClick={onOpenSupabaseConfig}
+        title={syncMessage}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-[11px] font-bold transition cursor-pointer"
+      >
+        <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+        <span className="hidden md:inline">Supabase: Kiểm tra kết nối</span>
+      </button>
+    );
   };
 
   return (
@@ -103,8 +175,11 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right side tools & user */}
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Supabase Connection Badge */}
+          {renderSupabaseBadge()}
+
           {/* System Admin Contact Badge */}
-          <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px]">
+          <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px]">
             <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
             <div className="flex items-center gap-1.5">
               <span>Quản lý HT: <strong className="text-white font-semibold">Trung tá Trần Thanh Tuấn</strong> – Phó Trưởng CAX</span>
@@ -153,3 +228,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

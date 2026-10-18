@@ -10,6 +10,8 @@ import {
   HoSoKhenThuong,
   DismissMemberData
 } from '../types';
+import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
+
 
 const STORAGE_KEYS = {
   NHAN_SU: 'ca_laivung_antt_nhansu_v1',
@@ -1289,9 +1291,561 @@ const INITIAL_KHEN_THUONG: HoSoKhenThuong[] = [
   },
 ];
 
+export type SupabaseSyncStatus =
+  | 'checking'
+  | 'connected_ready'
+  | 'connected_missing_tables'
+  | 'syncing'
+  | 'error';
+
+export interface SupabaseConnectionReport {
+  status: SupabaseSyncStatus;
+  message: string;
+  projectUrl: string;
+  lastSyncAt?: string;
+  tableCounts?: {
+    nhan_su: number;
+    dia_ban_ap: number;
+    to_antt: number;
+    nhat_ky_tuan_tra: number;
+    dot_tap_huan: number;
+    ho_so_khen_thuong: number;
+  };
+  errorDetail?: string;
+}
+
 class StorageService {
+  private syncStatus: SupabaseSyncStatus = 'checking';
+  private syncMessage = 'Đang kiểm tra kết nối Supabase...';
+  private lastSyncAt: string | undefined = undefined;
+  private statusListeners: Array<(status: SupabaseSyncStatus, message: string, lastSyncAt?: string) => void> = [];
+  private dataListeners: Array<() => void> = [];
+
   constructor() {
     this.initSystemAndEnforceAdmin();
+  }
+
+  // --- SUPABASE LISTENERS & STATUS ---
+  subscribeSyncStatus(
+    listener: (status: SupabaseSyncStatus, message: string, lastSyncAt?: string) => void
+  ): () => void {
+    this.statusListeners.push(listener);
+    listener(this.syncStatus, this.syncMessage, this.lastSyncAt);
+    return () => {
+      this.statusListeners = this.statusListeners.filter(l => l !== listener);
+    };
+  }
+
+  subscribeDataRefresh(listener: () => void): () => void {
+    this.dataListeners.push(listener);
+    return () => {
+      this.dataListeners = this.dataListeners.filter(l => l !== listener);
+    };
+  }
+
+  private notifyStatus(status: SupabaseSyncStatus, message: string): void {
+    this.syncStatus = status;
+    this.syncMessage = message;
+    if (status === 'connected_ready') {
+      this.lastSyncAt = new Date().toISOString();
+    }
+    this.statusListeners.forEach(l => l(this.syncStatus, this.syncMessage, this.lastSyncAt));
+  }
+
+  private notifyDataRefresh(): void {
+    this.dataListeners.forEach(l => l());
+  }
+
+  getSyncInfo(): { status: SupabaseSyncStatus; message: string; lastSyncAt?: string } {
+    return {
+      status: this.syncStatus,
+      message: this.syncMessage,
+      lastSyncAt: this.lastSyncAt,
+    };
+  }
+
+  // --- SUPABASE ROW MAPPERS ---
+  private fromDbRow<T>(row: any): T {
+    if (!row) return row;
+    const { raw_data, ...rest } = row;
+    const definedCols: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rest)) {
+      if (v !== null && v !== undefined) {
+        definedCols[k] = v;
+      }
+    }
+    const base = typeof raw_data === 'object' && raw_data !== null ? raw_data : {};
+    return { ...base, ...definedCols } as T;
+  }
+
+  private toDiaBanRow(item: DiaBanAp) {
+    return {
+      id: item.id,
+      ma_ap: item.ma_ap,
+      ten_ap: item.ten_ap,
+      mo_ta: item.mo_ta || null,
+      ghi_chu: item.ghi_chu || null,
+      trang_thai: item.trang_thai || 'hoat_dong',
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toToANTTRow(item: ToANTT) {
+    return {
+      id: item.id,
+      ma_to: item.ma_to,
+      ten_to: item.ten_to,
+      ap_id: item.ap_id || null,
+      to_truong_id: item.to_truong_id || null,
+      to_pho_id: item.to_pho_id || null,
+      ngay_thanh_lap: item.ngay_thanh_lap || null,
+      dia_ban_hoat_dong: item.dia_ban_hoat_dong || null,
+      ghi_chu: item.ghi_chu || null,
+      trang_thai: item.trang_thai || 'hoat_dong',
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toNhanSuRow(item: NhanSu) {
+    return {
+      id: item.id,
+      ma_nhan_su: item.ma_nhan_su,
+      stt: item.stt || 1,
+      ho_ten: item.ho_ten,
+      ngay_sinh: item.ngay_sinh || null,
+      gioi_tinh: item.gioi_tinh || 'Nam',
+      dan_toc: item.dan_toc || 'Kinh',
+      que_quan: item.que_quan || '',
+      noi_o_hien_nay: item.noi_o_hien_nay || '',
+      ap_id: item.ap_id || null,
+      dia_chi_chi_tiet: item.dia_chi_chi_tiet || '',
+      to_antt_id: item.to_antt_id || null,
+      chuc_vu: item.chuc_vu || 'Thành viên',
+      chuc_vu_kiem_nhiem: item.chuc_vu_kiem_nhiem || null,
+      trinh_do_hoc_van: item.trinh_do_hoc_van || 'THPT',
+      trinh_do_chuyen_mon: item.trinh_do_chuyen_mon || 'Chưa qua đào tạo',
+      chuyen_nganh: item.chuyen_nganh || null,
+      so_cccd: item.so_cccd || '',
+      ngay_cap_cccd: item.ngay_cap_cccd || null,
+      dang_vien: Boolean(item.dang_vien),
+      ngay_tham_gia_antt: item.ngay_tham_gia_antt || null,
+      so_quyet_dinh: item.so_quyet_dinh || null,
+      co_tai_khoan: Boolean(item.co_tai_khoan),
+      loai_ngan_hang: item.loai_ngan_hang || null,
+      so_tai_khoan: item.so_tai_khoan || null,
+      vneid_muc_2: Boolean(item.vneid_muc_2),
+      so_dien_thoai: item.so_dien_thoai || '',
+      ghi_chu: item.ghi_chu || null,
+      trang_thai: item.trang_thai || 'dang_hoat_dong',
+      so_quyet_dinh_thoi_viec: item.so_quyet_dinh_thoi_viec || null,
+      ngay_quyet_dinh_thoi_viec: item.ngay_quyet_dinh_thoi_viec || null,
+      ngay_thoi_viec: item.ngay_thoi_viec || null,
+      ly_do_thoi_viec: item.ly_do_thoi_viec || null,
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toTuanTraRow(item: NhatKyTuanTra) {
+    return {
+      id: item.id,
+      ngay_tuan_tra: item.ngay_tuan_tra,
+      ca_tuan_tra: item.ca_tuan_tra,
+      so_cuoc_cong_khai: Number(item.so_cuoc_cong_khai) || 0,
+      so_cuoc_mat_phuc: Number(item.so_cuoc_mat_phuc) || 0,
+      tong_so_cuoc: Number(item.tong_so_cuoc) || 0,
+      so_luot_thanh_vien: Number(item.so_luot_thanh_vien) || 0,
+      can_bo_cong_an_phu_trach: item.can_bo_cong_an_phu_trach || '',
+      tuyen_duong_dia_ban: item.tuyen_duong_dia_ban || '',
+      so_vu_viec_giai_quyet: Number(item.so_vu_viec_giai_quyet) || 0,
+      noi_dung_phoi_hop: item.noi_dung_phoi_hop || '',
+      ket_qua_noi_bat: item.ket_qua_noi_bat || null,
+      nguoi_ghi_so: item.nguoi_ghi_so || '',
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toTapHuanRow(item: DotTapHuan) {
+    return {
+      id: item.id,
+      ten_dot: item.ten_dot,
+      chuyen_de: item.chuyen_de || '',
+      thoi_gian_bat_dau: item.thoi_gian_bat_dau || '',
+      thoi_gian_ket_thuc: item.thoi_gian_ket_thuc || '',
+      dia_diem: item.dia_diem || '',
+      don_vi_to_chuc: item.don_vi_to_chuc || '',
+      so_lop: Number(item.so_lop) || 1,
+      so_thanh_vien_tham_gia: Number(item.so_thanh_vien_tham_gia) || 0,
+      noi_dung_tap_huan: item.noi_dung_tap_huan || '',
+      kinh_phi_ho_tro: Number(item.kinh_phi_ho_tro) || 0,
+      trang_thai: item.trang_thai || 'ke_hoach',
+      nguoi_nhap: item.nguoi_nhap || '',
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toKhenThuongRow(item: HoSoKhenThuong) {
+    return {
+      id: item.id,
+      loai_khen_thuong: item.loai_khen_thuong,
+      cap_khen_thuong: item.cap_khen_thuong,
+      hinh_thuc: item.hinh_thuc || '',
+      ten_nguoi_khen_thuong: item.ten_nguoi_khen_thuong || null,
+      thanh_vien_id: item.thanh_vien_id || null,
+      to_antt_id: item.to_antt_id || null,
+      so_quyet_dinh: item.so_quyet_dinh || '',
+      ngay_quyet_dinh: item.ngay_quyet_dinh || '',
+      co_quan_ban_hanh: item.co_quan_ban_hanh || '',
+      ly_do_khen_thuong: item.ly_do_khen_thuong || '',
+      tien_thuong: Number(item.tien_thuong) || 0,
+      nam_khen_thuong: Number(item.nam_khen_thuong) || new Date().getFullYear(),
+      nguoi_nhap: item.nguoi_nhap || '',
+      created_at: item.created_at || new Date().toISOString(),
+      updated_at: item.updated_at || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toUserRow(item: UserAccount) {
+    return {
+      id: item.id,
+      username: item.username,
+      full_name: item.fullName,
+      role: item.role,
+      chuc_vu: item.chucVu,
+      don_vi: item.donVi,
+      so_dien_thoai: item.soDienThoai || null,
+      created_at: item.createdAt || new Date().toISOString(),
+      raw_data: item,
+    };
+  }
+
+  private toAuditLogRow(item: AuditLog) {
+    return {
+      id: item.id,
+      user_id: item.user_id,
+      user_name: item.user_name,
+      user_role: item.user_role,
+      thoi_gian: item.thoi_gian,
+      hanh_dong: item.hanh_dong,
+      doi_tuong: item.doi_tuong,
+      noi_dung_thay_doi: item.noi_dung_thay_doi,
+      raw_data: item,
+    };
+  }
+
+  // --- BACKGROUND SYNC HELPERS ---
+  private async bgUpsert(table: string, rows: any | any[]): Promise<void> {
+    if (this.syncStatus === 'connected_missing_tables') return;
+    try {
+      const payload = Array.isArray(rows) ? rows : [rows];
+      if (payload.length === 0) return;
+      const { error } = await supabase.from(table).upsert(payload, { onConflict: 'id' });
+      if (error) {
+        if (error.code === '42P01' || error.message?.includes('does not exist') || error.message?.includes('schema cache')) {
+          this.notifyStatus(
+            'connected_missing_tables',
+            'Đã kết nối Supabase nhưng chưa khởi tạo bảng SQL'
+          );
+        } else {
+          console.warn(`Lỗi đồng bộ lên bảng Supabase [${table}]:`, error.message);
+        }
+      } else {
+        this.notifyStatus('connected_ready', 'Đã đồng bộ dữ liệu với đám mây Supabase');
+      }
+    } catch (err) {
+      console.warn(`Lỗi kết nối mạng khi đồng bộ bảng [${table}]:`, err);
+    }
+  }
+
+  private async bgDelete(table: string, id: string): Promise<void> {
+    if (this.syncStatus === 'connected_missing_tables') return;
+    try {
+      const { error } = await supabase.from(table).delete().eq('id', id);
+      if (!error) {
+        this.notifyStatus('connected_ready', 'Đã đồng bộ xóa dữ liệu trên Supabase');
+      }
+    } catch (err) {
+      console.warn(`Lỗi xóa bản ghi trên Supabase [${table}]:`, err);
+    }
+  }
+
+  // --- CHECK & INITIALIZE SUPABASE ---
+  async checkSupabaseConnection(): Promise<SupabaseConnectionReport> {
+    this.notifyStatus('checking', 'Đang kiểm tra kết nối máy chủ Supabase...');
+    try {
+      const { count: nhanSuCount, error: nsError } = await supabase
+        .from(SUPABASE_TABLES.NHAN_SU)
+        .select('*', { count: 'exact', head: true });
+
+      if (nsError) {
+        const isMissingTable =
+          nsError.code === '42P01' ||
+          nsError.code === 'PGRST205' ||
+          nsError.message?.includes('does not exist') ||
+          nsError.message?.includes('Could not find the table') ||
+          nsError.message?.includes('schema cache');
+
+        if (isMissingTable) {
+          this.notifyStatus(
+            'connected_missing_tables',
+            'Đã kết nối máy chủ Supabase — Cần chạy lệnh SQL khởi tạo bảng'
+          );
+          return {
+            status: 'connected_missing_tables',
+            message: 'Đã kết nối đúng Project Supabase (vupxyirmjjaruipruowu), nhưng chưa tạo các bảng dữ liệu. Vui lòng copy mã SQL bên dưới và nhấn RUN trong SQL Editor của Supabase.',
+            projectUrl: SUPABASE_URL,
+            errorDetail: nsError.message,
+          };
+        }
+
+        this.notifyStatus('error', `Lỗi truy cập Supabase: ${nsError.message}`);
+        return {
+          status: 'error',
+          message: `Không thể truy vấn bảng trên Supabase: ${nsError.message}`,
+          projectUrl: SUPABASE_URL,
+          errorDetail: nsError.message,
+        };
+      }
+
+      const [
+        { count: diaBanCount },
+        { count: toCount },
+        { count: tuanTraCount },
+        { count: tapHuanCount },
+        { count: khenThuongCount },
+      ] = await Promise.all([
+        supabase.from(SUPABASE_TABLES.DIA_BAN).select('*', { count: 'exact', head: true }),
+        supabase.from(SUPABASE_TABLES.TO_ANTT).select('*', { count: 'exact', head: true }),
+        supabase.from(SUPABASE_TABLES.TUAN_TRA).select('*', { count: 'exact', head: true }),
+        supabase.from(SUPABASE_TABLES.TAP_HUAN).select('*', { count: 'exact', head: true }),
+        supabase.from(SUPABASE_TABLES.KHEN_THUONG).select('*', { count: 'exact', head: true }),
+      ]);
+
+      this.notifyStatus('connected_ready', 'Đang kết nối trực tuyến với Supabase');
+
+      return {
+        status: 'connected_ready',
+        message: 'Kết nối Supabase hoàn tất và các bảng dữ liệu đã sẵn sàng hoạt động!',
+        projectUrl: SUPABASE_URL,
+        lastSyncAt: this.lastSyncAt,
+        tableCounts: {
+          nhan_su: nhanSuCount || 0,
+          dia_ban_ap: diaBanCount || 0,
+          to_antt: toCount || 0,
+          nhat_ky_tuan_tra: tuanTraCount || 0,
+          dot_tap_huan: tapHuanCount || 0,
+          ho_so_khen_thuong: khenThuongCount || 0,
+        },
+      };
+    } catch (err: any) {
+      const msg = err?.message || 'Lỗi mạng không xác định';
+      this.notifyStatus('error', `Lỗi kết nối Supabase: ${msg}`);
+      return {
+        status: 'error',
+        message: `Không thể kết nối tới Supabase: ${msg}`,
+        projectUrl: SUPABASE_URL,
+        errorDetail: msg,
+      };
+    }
+  }
+
+  // --- PULL ALL DATA FROM SUPABASE ---
+  async pullFromSupabase(): Promise<{
+    success: boolean;
+    message: string;
+    missingTables?: boolean;
+  }> {
+    this.notifyStatus('syncing', 'Đang tải dữ liệu từ đám mây Supabase...');
+    try {
+      const { data: nsData, error: nsErr } = await supabase
+        .from(SUPABASE_TABLES.NHAN_SU)
+        .select('*')
+        .order('stt', { ascending: true });
+
+      if (nsErr) {
+        const isMissing =
+          nsErr.code === '42P01' ||
+          nsErr.code === 'PGRST205' ||
+          nsErr.message?.includes('does not exist') ||
+          nsErr.message?.includes('Could not find the table') ||
+          nsErr.message?.includes('schema cache');
+
+        if (isMissing) {
+          this.notifyStatus(
+            'connected_missing_tables',
+            'Đã kết nối Supabase — Cần chạy SQL tạo bảng lần đầu'
+          );
+          return {
+            success: false,
+            missingTables: true,
+            message: 'Các bảng dữ liệu chưa được tạo trên Supabase. Hãy mở mục Sao lưu & Kết nối Supabase để lấy mã SQL khởi tạo bảng.',
+          };
+        }
+        this.notifyStatus('error', `Lỗi tải dữ liệu: ${nsErr.message}`);
+        return { success: false, message: nsErr.message };
+      }
+
+      const [
+        { data: dbData },
+        { data: toData },
+        { data: ttData },
+        { data: thData },
+        { data: ktData },
+        { data: usrData },
+        { data: logData },
+      ] = await Promise.all([
+        supabase.from(SUPABASE_TABLES.DIA_BAN).select('*'),
+        supabase.from(SUPABASE_TABLES.TO_ANTT).select('*'),
+        supabase.from(SUPABASE_TABLES.TUAN_TRA).select('*'),
+        supabase.from(SUPABASE_TABLES.TAP_HUAN).select('*'),
+        supabase.from(SUPABASE_TABLES.KHEN_THUONG).select('*'),
+        supabase.from(SUPABASE_TABLES.USERS).select('*'),
+        supabase.from(SUPABASE_TABLES.AUDIT_LOGS).select('*').order('thoi_gian', { ascending: false }).limit(500),
+      ]);
+
+      // Nếu bảng Địa bàn & Tổ ANTT trên Supabase đang trống (mới tạo bảng lần đầu),
+      // tự động đẩy dữ liệu mặc định (19 ấp, 19 tổ ANTT và dữ liệu hiện có ở máy) lên Supabase!
+      const isCloudBrandNew =
+        (!dbData || dbData.length === 0) &&
+        (!toData || toData.length === 0) &&
+        (!nsData || nsData.length === 0);
+
+      if (isCloudBrandNew) {
+        await this.pushAllToSupabase();
+        this.notifyStatus('connected_ready', 'Đã khởi tạo dữ liệu ban đầu lên Supabase');
+        return {
+          success: true,
+          message: 'Đã tự động đồng bộ danh mục 19 Ấp, 19 Tổ ANTT và dữ liệu hiện tại lên Supabase!',
+        };
+      }
+
+      if (dbData && dbData.length > 0) {
+        const list = dbData.map(r => this.fromDbRow<DiaBanAp>(r));
+        localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+      }
+      if (toData && toData.length > 0) {
+        const list = toData.map(r => this.fromDbRow<ToANTT>(r));
+        localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+      }
+      if (nsData) {
+        const list = nsData.map(r => this.fromDbRow<NhanSu>(r));
+        this.setNhanSuListLocalOnly(list);
+      }
+      if (ttData && ttData.length > 0) {
+        const list = ttData.map(r => this.fromDbRow<NhatKyTuanTra>(r));
+        localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(list));
+      }
+      if (thData && thData.length > 0) {
+        const list = thData.map(r => this.fromDbRow<DotTapHuan>(r));
+        localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(list));
+      }
+      if (ktData && ktData.length > 0) {
+        const list = ktData.map(r => this.fromDbRow<HoSoKhenThuong>(r));
+        localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(list));
+      }
+      if (usrData && usrData.length > 0) {
+        const list = usrData.map(r => this.fromDbRow<UserAccount>(r));
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+      }
+      if (logData && logData.length > 0) {
+        const list = logData.map(r => this.fromDbRow<AuditLog>(r));
+        localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(list));
+      }
+
+      this.notifyStatus('connected_ready', 'Đã đồng bộ dữ liệu mới nhất từ Supabase');
+      this.notifyDataRefresh();
+
+      return {
+        success: true,
+        message: `Đã tải thành công dữ liệu từ Supabase (${nsData?.length || 0} hồ sơ nhân sự, ${dbData?.length || 0} ấp, ${toData?.length || 0} tổ ANTT).`,
+      };
+    } catch (err: any) {
+      const msg = err?.message || 'Lỗi mạng khi tải dữ liệu từ Supabase';
+      this.notifyStatus('error', msg);
+      return { success: false, message: msg };
+    }
+  }
+
+  // --- PUSH ALL LOCAL DATA TO SUPABASE ---
+  async pushAllToSupabase(): Promise<{
+    success: boolean;
+    message: string;
+    counts?: Record<string, number>;
+  }> {
+    this.notifyStatus('syncing', 'Đang đẩy toàn bộ dữ liệu lên Supabase...');
+    try {
+      const diaBan = this.getDiaBanList().map(x => this.toDiaBanRow(x));
+      const toANTT = this.getToANTTList().map(x => this.toToANTTRow(x));
+      const nhanSu = this.getAllNhanSuRaw().map(x => this.toNhanSuRow(x));
+      const tuanTra = this.getNhatKyTuanTraList().map(x => this.toTuanTraRow(x));
+      const tapHuan = this.getDotTapHuanList().map(x => this.toTapHuanRow(x));
+      const khenThuong = this.getHoSoKhenThuongList().map(x => this.toKhenThuongRow(x));
+      const users = this.getUsers().map(x => this.toUserRow(x));
+      const logs = this.getAuditLogs().slice(0, 200).map(x => this.toAuditLogRow(x));
+
+      const results = await Promise.all([
+        diaBan.length > 0 ? supabase.from(SUPABASE_TABLES.DIA_BAN).upsert(diaBan, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        toANTT.length > 0 ? supabase.from(SUPABASE_TABLES.TO_ANTT).upsert(toANTT, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        nhanSu.length > 0 ? supabase.from(SUPABASE_TABLES.NHAN_SU).upsert(nhanSu, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        tuanTra.length > 0 ? supabase.from(SUPABASE_TABLES.TUAN_TRA).upsert(tuanTra, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        tapHuan.length > 0 ? supabase.from(SUPABASE_TABLES.TAP_HUAN).upsert(tapHuan, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        khenThuong.length > 0 ? supabase.from(SUPABASE_TABLES.KHEN_THUONG).upsert(khenThuong, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        users.length > 0 ? supabase.from(SUPABASE_TABLES.USERS).upsert(users, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+        logs.length > 0 ? supabase.from(SUPABASE_TABLES.AUDIT_LOGS).upsert(logs, { onConflict: 'id' }) : Promise.resolve({ error: null }),
+      ]);
+
+      const firstErr = results.find(r => r.error)?.error;
+      if (firstErr) {
+        const isMissing =
+          firstErr.code === '42P01' ||
+          firstErr.code === 'PGRST205' ||
+          firstErr.message?.includes('does not exist') ||
+          firstErr.message?.includes('Could not find the table') ||
+          firstErr.message?.includes('schema cache');
+
+        if (isMissing) {
+          this.notifyStatus('connected_missing_tables', 'Chưa tạo bảng trên Supabase');
+          return {
+            success: false,
+            message: 'Chưa thể đẩy dữ liệu vì trên Supabase chưa tạo bảng. Vui lòng copy mã SQL bên dưới và chạy trong SQL Editor của Supabase trước.',
+          };
+        }
+
+        this.notifyStatus('error', `Lỗi đồng bộ: ${firstErr.message}`);
+        return {
+          success: false,
+          message: `Lỗi từ Supabase: ${firstErr.message}`,
+        };
+      }
+
+      this.notifyStatus('connected_ready', 'Đã đồng bộ 100% dữ liệu lên Supabase');
+      return {
+        success: true,
+        message: `Đã đẩy thành công toàn bộ dữ liệu lên Supabase (${nhanSu.length} nhân sự, ${diaBan.length} ấp, ${toANTT.length} tổ ANTT, ${tuanTra.length} ca tuần tra, ${tapHuan.length} đợt tập huấn, ${khenThuong.length} hồ sơ khen thưởng).`,
+        counts: {
+          nhan_su: nhanSu.length,
+          dia_ban_ap: diaBan.length,
+          to_antt: toANTT.length,
+          nhat_ky_tuan_tra: tuanTra.length,
+          dot_tap_huan: tapHuan.length,
+          ho_so_khen_thuong: khenThuong.length,
+        },
+      };
+    } catch (err: any) {
+      const msg = err?.message || 'Lỗi không xác định khi đẩy dữ liệu lên Supabase';
+      this.notifyStatus('error', msg);
+      return { success: false, message: msg };
+    }
   }
 
   private initSystemAndEnforceAdmin(): void {
@@ -1384,12 +1938,13 @@ class StorageService {
     } else {
       users.unshift(adminAccount);
     }
-    this.setUsers(users);
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
     return users;
   }
 
   setUsers(users: UserAccount[]): void {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    void this.bgUpsert(SUPABASE_TABLES.USERS, users.map(u => this.toUserRow(u)));
   }
 
   getCurrentUser(): UserAccount | null {
@@ -1427,7 +1982,7 @@ class StorageService {
   getDiaBanList(): DiaBanAp[] {
     const raw = localStorage.getItem(STORAGE_KEYS.DIA_BAN);
     if (!raw) {
-      this.setDiaBanList(INITIAL_DIA_BAN);
+      localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(INITIAL_DIA_BAN));
       return INITIAL_DIA_BAN;
     }
     try {
@@ -1439,33 +1994,39 @@ class StorageService {
 
   setDiaBanList(list: DiaBanAp[]): void {
     localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, list.map(item => this.toDiaBanRow(item)));
   }
 
   saveDiaBan(item: DiaBanAp): void {
     const list = this.getDiaBanList();
     const index = list.findIndex(i => i.id === item.id);
+    let savedItem: DiaBanAp;
     if (index >= 0) {
-      list[index] = { ...item, updated_at: new Date().toISOString() };
+      savedItem = { ...item, updated_at: new Date().toISOString() };
+      list[index] = savedItem;
     } else {
-      list.push({
+      savedItem = {
         ...item,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      };
+      list.push(savedItem);
     }
-    this.setDiaBanList(list);
+    localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, this.toDiaBanRow(savedItem));
   }
 
   deleteDiaBan(id: string): void {
     const list = this.getDiaBanList().filter(i => i.id !== id);
-    this.setDiaBanList(list);
+    localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    void this.bgDelete(SUPABASE_TABLES.DIA_BAN, id);
   }
 
   // --- TỔ ANTT ---
   getToANTTList(): ToANTT[] {
     const raw = localStorage.getItem(STORAGE_KEYS.TO_ANTT);
     if (!raw) {
-      this.setToANTTList(INITIAL_TO_ANTT);
+      localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(INITIAL_TO_ANTT));
       return INITIAL_TO_ANTT;
     }
     try {
@@ -1477,26 +2038,32 @@ class StorageService {
 
   setToANTTList(list: ToANTT[]): void {
     localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, list.map(item => this.toToANTTRow(item)));
   }
 
   saveToANTT(item: ToANTT): void {
     const list = this.getToANTTList();
     const index = list.findIndex(i => i.id === item.id);
+    let savedItem: ToANTT;
     if (index >= 0) {
-      list[index] = { ...item, updated_at: new Date().toISOString() };
+      savedItem = { ...item, updated_at: new Date().toISOString() };
+      list[index] = savedItem;
     } else {
-      list.push({
+      savedItem = {
         ...item,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      };
+      list.push(savedItem);
     }
-    this.setToANTTList(list);
+    localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, this.toToANTTRow(savedItem));
   }
 
   deleteToANTT(id: string): void {
     const list = this.getToANTTList().filter(i => i.id !== id);
-    this.setToANTTList(list);
+    localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    void this.bgDelete(SUPABASE_TABLES.TO_ANTT, id);
   }
 
   // --- NHÂN SỰ ---
@@ -1504,7 +2071,7 @@ class StorageService {
     const raw = localStorage.getItem(STORAGE_KEYS.NHAN_SU);
     let list: NhanSu[] = [];
     if (!raw) {
-      this.setNhanSuList(INITIAL_NHAN_SU);
+      this.setNhanSuListLocalOnly(INITIAL_NHAN_SU);
       list = INITIAL_NHAN_SU;
     } else {
       try {
@@ -1521,14 +2088,13 @@ class StorageService {
     return this.getNhanSuList(true);
   }
 
-  setNhanSuList(list: NhanSu[]): boolean {
+  private setNhanSuListLocalOnly(list: NhanSu[]): boolean {
     try {
       localStorage.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify(list));
       return true;
     } catch (e) {
       console.warn('Cảnh báo bộ nhớ trình duyệt đầy, tiến hành tối ưu hóa lưu trữ:', e);
       try {
-        // Tối ưu hóa: cắt bớt kích thước chuỗi base64 nếu ảnh quá lớn
         const optimizedList = list.map(m => {
           if (m.anh_chan_dung && m.anh_chan_dung.length > 500000) {
             return { ...m, anh_chan_dung: m.anh_chan_dung.slice(0, 250000) };
@@ -1542,6 +2108,12 @@ class StorageService {
         return false;
       }
     }
+  }
+
+  setNhanSuList(list: NhanSu[]): boolean {
+    const ok = this.setNhanSuListLocalOnly(list);
+    void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, list.map(item => this.toNhanSuRow(item)));
+    return ok;
   }
 
   saveNhanSu(item: NhanSu): { success: boolean; error?: string } {
@@ -1562,23 +2134,27 @@ class StorageService {
 
     const index = list.findIndex(i => i.id === item.id);
     const now = new Date().toISOString();
+    let savedItem: NhanSu;
 
     if (index >= 0) {
-      list[index] = {
+      savedItem = {
         ...item,
         updated_at: now,
       };
+      list[index] = savedItem;
     } else {
       const maxStt = list.length > 0 ? Math.max(...list.map(i => i.stt || 0)) : 0;
-      list.push({
+      savedItem = {
         ...item,
         stt: item.stt || maxStt + 1,
         created_at: now,
         updated_at: now,
-      });
+      };
+      list.push(savedItem);
     }
 
-    this.setNhanSuList(list);
+    this.setNhanSuListLocalOnly(list);
+    void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(savedItem));
     return { success: true };
   }
 
@@ -1589,7 +2165,8 @@ class StorageService {
       list[index].trang_thai = 'da_xoa';
       list[index].deleted_at = new Date().toISOString();
       list[index].updated_at = new Date().toISOString();
-      this.setNhanSuList(list);
+      this.setNhanSuListLocalOnly(list);
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
       return true;
     }
     return false;
@@ -1602,7 +2179,8 @@ class StorageService {
       list[index].trang_thai = 'dang_hoat_dong';
       delete list[index].deleted_at;
       list[index].updated_at = new Date().toISOString();
-      this.setNhanSuList(list);
+      this.setNhanSuListLocalOnly(list);
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
       return true;
     }
     return false;
@@ -1610,7 +2188,8 @@ class StorageService {
 
   permanentDeleteNhanSu(id: string): boolean {
     const list = this.getAllNhanSuRaw().filter(i => i.id !== id);
-    this.setNhanSuList(list);
+    this.setNhanSuListLocalOnly(list);
+    void this.bgDelete(SUPABASE_TABLES.NHAN_SU, id);
     return true;
   }
 
@@ -1634,7 +2213,8 @@ class StorageService {
         ghi_chu_thoi_viec: data.ghi_chu_thoi_viec,
         updated_at: now,
       };
-      this.setNhanSuList(list);
+      this.setNhanSuListLocalOnly(list);
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
 
       const user = currentUser || this.getCurrentUser();
       this.addAuditLog(
@@ -1659,7 +2239,8 @@ class StorageService {
         trang_thai: 'dang_hoat_dong',
         updated_at: now,
       };
-      this.setNhanSuList(list);
+      this.setNhanSuListLocalOnly(list);
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
 
       const user = currentUser || this.getCurrentUser();
       this.addAuditLog(
@@ -1691,7 +2272,8 @@ class StorageService {
         ghi_chu_thoi_viec: data.ghi_chu_thoi_viec,
         updated_at: now,
       };
-      this.setNhanSuList(list);
+      this.setNhanSuListLocalOnly(list);
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, this.toNhanSuRow(list[index]));
 
       const user = currentUser || this.getCurrentUser();
       this.addAuditLog(
@@ -1746,6 +2328,7 @@ class StorageService {
       logs.length = 500;
     }
     localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
+    void this.bgUpsert(SUPABASE_TABLES.AUDIT_LOGS, this.toAuditLogRow(newLog));
   }
 
   // --- CONVENIENCE ALIASES FOR COMPONENT INTERACTION ---
@@ -1768,7 +2351,8 @@ class StorageService {
   bulkSaveMembers(items: NhanSu[]): void {
     const current = this.getAllNhanSuRaw();
     const merged = [...items, ...current.filter(c => !items.some(i => i.id === c.id))];
-    this.setNhanSuList(merged);
+    this.setNhanSuListLocalOnly(merged);
+    void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, items.map(item => this.toNhanSuRow(item)));
   }
 
   softDeleteMember(id: string): boolean {
@@ -1847,6 +2431,7 @@ class StorageService {
     }
 
     localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
+    void this.bgUpsert(SUPABASE_TABLES.TUAN_TRA, this.toTuanTraRow(finalItem));
     return finalItem;
   }
 
@@ -1858,6 +2443,7 @@ class StorageService {
     const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
+    void this.bgDelete(SUPABASE_TABLES.TUAN_TRA, id);
 
     this.addAuditLog(
       currentUser,
@@ -1909,6 +2495,7 @@ class StorageService {
     }
 
     localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
+    void this.bgUpsert(SUPABASE_TABLES.TAP_HUAN, this.toTapHuanRow(finalItem));
     return finalItem;
   }
 
@@ -1920,6 +2507,7 @@ class StorageService {
     const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
+    void this.bgDelete(SUPABASE_TABLES.TAP_HUAN, id);
 
     this.addAuditLog(
       currentUser,
@@ -1974,6 +2562,7 @@ class StorageService {
     }
 
     localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
+    void this.bgUpsert(SUPABASE_TABLES.KHEN_THUONG, this.toKhenThuongRow(finalItem));
     return finalItem;
   }
 
@@ -1985,6 +2574,7 @@ class StorageService {
     const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
+    void this.bgDelete(SUPABASE_TABLES.KHEN_THUONG, id);
 
     this.addAuditLog(
       currentUser,
@@ -2039,9 +2629,11 @@ class StorageService {
         localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(parsed.data.khen_thuong));
       }
 
+      void this.pushAllToSupabase();
+
       return {
         success: true,
-        message: 'Khôi phục cơ sở dữ liệu thành công!',
+        message: 'Khôi phục cơ sở dữ liệu thành công và đang đồng bộ lên Supabase!',
         count: parsed.data.nhan_su.length,
       };
     } catch (e: any) {
@@ -2060,10 +2652,18 @@ class StorageService {
     localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(INITIAL_TUAN_TRA));
     localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(INITIAL_TAP_HUAN));
     localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(INITIAL_KHEN_THUONG));
+    void this.pushAllToSupabase();
   }
 
   clearAllData(user?: UserAccount): void {
-    this.setNhanSuList([]);
+    this.setNhanSuListLocalOnly([]);
+    void (async () => {
+      try {
+        await supabase.from(SUPABASE_TABLES.NHAN_SU).delete().neq('id', '__none__');
+      } catch (e) {
+        console.warn('Lỗi xóa sạch bảng nhan_su trên Supabase:', e);
+      }
+    })();
     const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
     this.addAuditLog(
       currentUser,
@@ -2075,3 +2675,4 @@ class StorageService {
 }
 
 export const storageService = new StorageService();
+
