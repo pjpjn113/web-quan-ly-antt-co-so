@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
 import { OFFICIAL_MEMBERS } from '../data/officialMembers';
+import { hashPassword } from '../utils/security';
 
 
 const STORAGE_KEYS = {
@@ -1546,6 +1547,7 @@ class StorageService {
     return {
       id: item.id,
       username: item.username,
+      password_hash: item.passwordHash || null,
       full_name: item.fullName,
       role: item.role,
       chuc_vu: item.chucVu,
@@ -2245,6 +2247,111 @@ class StorageService {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
     } else {
       localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    }
+  }
+
+  async registerUser(params: {
+    username: string;
+    password: string;
+    fullName: string;
+    role?: UserRole;
+    chucVu?: string;
+    donVi?: string;
+    soDienThoai?: string;
+  }): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
+    const rawUsername = (params.username || '').trim();
+    if (!rawUsername) {
+      return { success: false, error: 'Vui lòng nhập tên đăng nhập.' };
+    }
+    if (rawUsername.length < 3) {
+      return { success: false, error: 'Tên đăng nhập phải có ít nhất 3 ký tự.' };
+    }
+    if (/\s/.test(rawUsername)) {
+      return { success: false, error: 'Tên đăng nhập không được chứa khoảng trắng (viết liền không dấu).' };
+    }
+    if (!params.password || params.password.length < 6) {
+      return { success: false, error: 'Mật khẩu phải có tối thiểu 6 ký tự.' };
+    }
+    if (!params.fullName || !params.fullName.trim()) {
+      return { success: false, error: 'Vui lòng nhập họ và tên cán bộ.' };
+    }
+
+    const cleanUsername = rawUsername.toLowerCase();
+    const currentUsers = this.getUsers();
+
+    const exists = currentUsers.some(u => u.username.toLowerCase() === cleanUsername);
+    if (exists) {
+      return {
+        success: false,
+        error: `Tên đăng nhập "${rawUsername}" đã được sử dụng. Vui lòng chọn tên đăng nhập khác!`,
+      };
+    }
+
+    // Băm mật khẩu bằng hàm bảo mật chuẩn SHA-256
+    const hashed = await hashPassword(params.password);
+    const now = new Date().toISOString();
+    const newUser: UserAccount = {
+      id: 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      username: rawUsername,
+      passwordHash: hashed,
+      fullName: params.fullName.trim(),
+      role: params.role || 'VIEWER',
+      chucVu: params.chucVu?.trim() || 'Cán bộ cơ sở',
+      donVi: params.donVi?.trim() || 'Công an xã Lai Vung',
+      soDienThoai: params.soDienThoai?.trim() || '',
+      createdAt: now,
+    };
+
+    const updatedUsers = [...currentUsers, newUser];
+    this.setUsers(updatedUsers);
+
+    this.addAuditLog(
+      newUser,
+      'THEM_MOI',
+      `Tài khoản: ${newUser.username} (${newUser.fullName})`,
+      `Đăng ký tài khoản cán bộ mới thành công với vai trò ${newUser.role} - Đơn vị: ${newUser.donVi}`
+    );
+
+    return { success: true, user: newUser };
+  }
+
+  deleteUser(id: string): { success: boolean; error?: string } {
+    const currentUsers = this.getUsers();
+    const target = currentUsers.find(u => u.id === id);
+    if (!target) return { success: false, error: 'Không tìm thấy tài khoản.' };
+    if (target.role === 'ADMIN' || target.username.toLowerCase() === 'admin') {
+      return { success: false, error: 'Không thể xóa tài khoản Quản trị viên tối cao (Admin).' };
+    }
+    const filtered = currentUsers.filter(u => u.id !== id);
+    this.setUsers(filtered);
+    void this.bgDelete(SUPABASE_TABLES.USERS, id);
+    return { success: true };
+  }
+
+  updateUser(user: UserAccount): { success: boolean; error?: string } {
+    const currentUsers = this.getUsers();
+    const idx = currentUsers.findIndex(u => u.id === user.id);
+    if (idx === -1) return { success: false, error: 'Không tìm thấy tài khoản.' };
+    currentUsers[idx] = user;
+    this.setUsers(currentUsers);
+    return { success: true };
+  }
+
+  async syncUsersToSupabase(): Promise<{ success: boolean; message: string; count?: number }> {
+    try {
+      const users = this.getUsers().map(u => this.toUserRow(u));
+      const { error } = await supabase.from(SUPABASE_TABLES.USERS).upsert(users, { onConflict: 'id' });
+      if (error) {
+        return { success: false, message: `Lỗi Supabase: ${error.message}` };
+      }
+      this.notifyStatus('connected_ready', 'Đã đồng bộ tài khoản người dùng lên Supabase');
+      return {
+        success: true,
+        message: `Đã lưu trữ thành công ${users.length} tài khoản (kèm tên đăng nhập) lên bảng users của Supabase!`,
+        count: users.length,
+      };
+    } catch (e: any) {
+      return { success: false, message: e?.message || 'Lỗi mạng khi kết nối Supabase' };
     }
   }
 

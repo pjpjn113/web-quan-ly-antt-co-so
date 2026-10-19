@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS public.ho_so_khen_thuong (
 CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
+  password_hash TEXT,
   full_name TEXT,
   role TEXT DEFAULT 'VIEWER',
   chuc_vu TEXT,
