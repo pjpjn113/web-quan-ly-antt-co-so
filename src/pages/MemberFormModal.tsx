@@ -196,6 +196,7 @@ export const MemberFormModal: React.FC<MemberFormModalProps> = ({
         co_tai_khoan: false,
         vneid_muc_2: true,
         so_dien_thoai: '',
+        ma_bhyt: '',
         anh_chan_dung: undefined,
         ghi_chu: '',
         trang_thai: 'dang_hoat_dong',
@@ -1045,6 +1046,21 @@ export const MemberFormModal: React.FC<MemberFormModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Mã Bảo hiểm y tế */}
+            <div className="mt-3">
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Mã số thẻ Bảo hiểm y tế (BHYT)
+              </label>
+              <input
+                type="text"
+                placeholder="Ví dụ: BA 4828720101437, GD 4828723011489..."
+                value={formData.ma_bhyt || ''}
+                onChange={e => setFormData({ ...formData, ma_bhyt: e.target.value })}
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white font-mono uppercase"
+              />
+              <span className="text-[10px] text-slate-400">Mã thẻ BHYT được cấp phục vụ chế độ chính sách theo Luật Lực lượng tham gia bảo vệ ANTT ở cơ sở</span>
+            </div>
           </div>
 
           {/* Ghi chú & Trạng thái */}

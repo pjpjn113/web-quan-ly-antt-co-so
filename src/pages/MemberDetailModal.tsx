@@ -498,6 +498,14 @@ export const MemberDetailModal: React.FC<MemberDetailModalProps> = ({
                   {member.vneid_muc_2 ? 'Đã kích hoạt định danh mức 2' : 'Chưa kích hoạt'}
                 </span>
               </div>
+              {member.ma_bhyt && (
+                <div className="grid grid-cols-3 py-1">
+                  <span className="text-slate-500">Mã BHYT:</span>
+                  <span className="col-span-2 font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block w-fit">
+                    {member.ma_bhyt}
+                  </span>
+                </div>
+              )}
               <div className="grid grid-cols-3 py-1">
                 <span className="text-slate-500">Trạng thái:</span>
                 <span className="col-span-2 font-bold text-slate-800 capitalize">

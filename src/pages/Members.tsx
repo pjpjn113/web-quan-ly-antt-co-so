@@ -1191,10 +1191,18 @@ export const Members: React.FC<MembersProps> = ({
                                 </span>
                               )}
                             </div>
-                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                              <span>{maskPhoneNumber(member.so_dien_thoai)}</span>
+                            <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <span className="font-mono font-medium text-slate-700">{maskPhoneNumber(member.so_dien_thoai)}</span>
                               <span>•</span>
                               <span>{member.dan_toc}</span>
+                              {member.ma_bhyt && (
+                                <>
+                                  <span>•</span>
+                                  <span className="font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 text-[10px] font-semibold" title="Mã thẻ BHYT">
+                                    BHYT: {member.ma_bhyt}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                         </div>

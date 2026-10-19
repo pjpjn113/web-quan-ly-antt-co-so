@@ -47,6 +47,7 @@ export const EXCEL_EXPORT_COLUMNS: { key: keyof NhanSu; label: string; defaultSe
   { key: 'co_tai_khoan', label: 'Có TK Ngân Hàng', defaultSelected: true },
   { key: 'loai_ngan_hang', label: 'Ngân Hàng', defaultSelected: true },
   { key: 'so_tai_khoan', label: 'Số Tài Khoản', defaultSelected: true },
+  { key: 'ma_bhyt', label: 'Mã Thẻ BHYT', defaultSelected: true },
   { key: 'ghi_chu', label: 'Ghi Chú', defaultSelected: false },
 ];
 

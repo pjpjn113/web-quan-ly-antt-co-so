@@ -11,6 +11,7 @@ import {
   DismissMemberData
 } from '../types';
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
+import { OFFICIAL_MEMBERS } from '../data/officialMembers';
 
 
 const STORAGE_KEYS = {
@@ -461,11 +462,11 @@ const INITIAL_TO_ANTT: ToANTT[] = [
   },
 ];
 
-// Cơ sở dữ liệu mặc định ban đầu: Rỗng (Đã xóa toàn bộ dữ liệu hiện có theo chỉ đạo)
-const INITIAL_NHAN_SU: NhanSu[] = [];
+// Dữ liệu chuẩn chính thức lực lượng ANTT cơ sở xã Lai Vung (27 đồng chí chính thức theo biểu mẫu)
+const INITIAL_NHAN_SU: NhanSu[] = OFFICIAL_MEMBERS;
+export const DEMO_SAMPLE_MEMBERS: NhanSu[] = OFFICIAL_MEMBERS;
 
-// Dữ liệu mẫu chuẩn lực lượng ANTT cơ sở xã Lai Vung (chỉ nạp khi cán bộ yêu cầu chạy demo)
-export const DEMO_SAMPLE_MEMBERS: NhanSu[] = [
+const OLD_DEMO_SAMPLE_MEMBERS: NhanSu[] = [
   {
     id: 'ns_001',
     ma_nhan_su: 'ANTT-LV-001',
@@ -2123,6 +2124,20 @@ class StorageService {
       localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(INITIAL_DIA_BAN));
       localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(INITIAL_TO_ANTT));
       localStorage.setItem(UPDATE_19_AP_FLAG, 'done');
+    }
+
+    // Tự động nạp danh sách 27 thành viên chính thức theo biểu mẫu được phê duyệt
+    const SEED_27_MEMBERS_FLAG = 'ca_laivung_27_members_official_v1';
+    if (localStorage.getItem(SEED_27_MEMBERS_FLAG) !== 'done') {
+      this.savePendingSync({
+        hardDeletedIds: [],
+        softDeletedMap: {},
+        deletedTombstones: {},
+        softDeletedTombstones: {},
+        clearAllPending: false,
+      });
+      this.setNhanSuListLocalOnly(OFFICIAL_MEMBERS);
+      localStorage.setItem(SEED_27_MEMBERS_FLAG, 'done');
     }
 
     // Khởi tạo dữ liệu tuần tra, tập huấn, khen thưởng nếu chưa có

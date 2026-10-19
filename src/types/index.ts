@@ -100,6 +100,7 @@ export interface NhanSu {
   so_tai_khoan?: string;
   vneid_muc_2: boolean;
   so_dien_thoai: string;
+  ma_bhyt?: string;
   ghi_chu?: string;
   trang_thai: MemberStatus;
   
