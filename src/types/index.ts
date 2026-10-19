@@ -17,7 +17,7 @@ export type AgeGroup = '18–30' | '31–45' | '46–60' | '61–70' | 'Trên 70
 
 export type Gender = 'Nam' | 'Nữ' | 'Khác';
 
-export type PositionANTT = 'Tổ trưởng' | 'Tổ phó' | 'Thành viên';
+export type PositionANTT = 'Tổ trưởng' | 'Tổ phó' | 'Tổ viên' | 'Thành viên';
 
 export type ChucVuKiemNhiem = 
   | 'Không kiêm nhiệm'
@@ -26,9 +26,20 @@ export type ChucVuKiemNhiem =
   | 'Bí thư chi bộ ấp'
   | 'Phó Bí thư chi bộ ấp'
   | 'Phó Trưởng ấp'
-  | 'Khác';
+  | 'Khác'
+  | string;
 
-export type EducationLevel = 'Tiểu học' | 'THCS' | 'THPT' | 'Khác';
+export type EducationLevel = 
+  | 'Tiểu học' 
+  | 'THCS' 
+  | 'THPT' 
+  | '12/12' 
+  | '11/12' 
+  | '10/12' 
+  | '9/12' 
+  | '8/12' 
+  | '7/12' 
+  | 'Khác';
 
 export type ProfessionalLevel = 
   | 'Chưa qua đào tạo' 
