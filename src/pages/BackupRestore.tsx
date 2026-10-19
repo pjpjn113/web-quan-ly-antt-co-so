@@ -29,9 +29,13 @@ import {
 import {
   SUPABASE_URL,
   SUPABASE_PROJECT_REF,
-  SUPABASE_SQL_SCHEMA,
+  SQL_STEP_1_TABLES_SCHEMA,
+  SQL_STEP_2_SECURITY_AND_RLS,
+  SQL_STEP_3_SET_FIRST_ADMIN,
+  SQL_STEP_4_MIGRATE_AND_CLEANUP,
 } from '../services/supabaseClient';
-import { UserAccount } from '../types';
+import { UserAccount, UserRole } from '../types';
+import { formatUserDateVN } from '../utils/helpers';
 
 interface BackupRestoreProps {
   currentUser: UserAccount;
@@ -47,8 +51,10 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
   const [isRestoring, setIsRestoring] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Users list state
-  const [userList, setUserList] = useState<UserAccount[]>(() => storageService.getUsers());
+  // Users list state (Yêu cầu 4: tài khoản thường chỉ xem hồ sơ mình, ADMIN xem danh sách)
+  const [userList, setUserList] = useState<UserAccount[]>(() => storageService.getUsers(currentUser));
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(() => storageService.getLastUsersError());
 
   // Supabase states
   const [connReport, setConnReport] = useState<SupabaseConnectionReport | null>(null);
@@ -56,8 +62,70 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
   const [isSyncingPush, setIsSyncingPush] = useState(false);
   const [isSyncingPull, setIsSyncingPull] = useState(false);
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
-  const [showSqlModal, setShowSqlModal] = useState(false);
-  const [copiedSql, setCopiedSql] = useState(false);
+
+  // 4 SQL Migration Steps state
+  const [activeSqlStep, setActiveSqlStep] = useState<1 | 2 | 3 | 4>(1);
+  const [copiedStepIndex, setCopiedStepIndex] = useState<number | null>(null);
+  const [isChangingRole, setIsChangingRole] = useState<string | null>(null);
+  const [showSqlGuide, setShowSqlGuide] = useState(true);
+
+  const handleCopyStep = async (stepNumber: 1 | 2 | 3 | 4, sqlContent: string, title: string) => {
+    try {
+      await navigator.clipboard.writeText(sqlContent);
+      setCopiedStepIndex(stepNumber);
+      onShowToast(
+        `Đã sao chép ${title}`,
+        'Hãy dán vào SQL Editor trên Supabase và bấm nút RUN để thực thi.',
+        'success'
+      );
+      setTimeout(() => setCopiedStepIndex(null), 3000);
+    } catch {
+      onShowToast('Lỗi', 'Không thể tự động sao chép. Vui lòng chọn và copy mã thủ công.', 'warning');
+    }
+  };
+
+  const refreshUsersList = useCallback(
+    async (notifyOnSuccess = false) => {
+      setIsLoadingUsers(true);
+      try {
+        const res = await storageService.fetchUsersFromSupabase(currentUser);
+        setUserList(res.users);
+        if (!res.success) {
+          const errText = res.error || 'Truy vấn danh sách tài khoản trên Supabase thất bại.';
+          setUsersLoadError(errText);
+          onShowToast('Lỗi tải danh sách tài khoản', errText, 'error');
+        } else {
+          setUsersLoadError(null);
+          if (notifyOnSuccess) {
+            onShowToast('Đã cập nhật danh sách', `Đã tải ${res.users.length} hồ sơ tài khoản từ Supabase.`, 'info');
+          }
+        }
+      } finally {
+        setIsLoadingUsers(false);
+      }
+    },
+    [currentUser, onShowToast]
+  );
+
+  // Yêu cầu 2: Chỉ quản trị viên được thay đổi role của người khác
+  const handleRoleChange = async (targetUserId: string, newRole: UserRole) => {
+    if (currentUser.role !== 'ADMIN') {
+      onShowToast('Từ chối quyền', 'Chỉ Quản trị viên (ADMIN) mới có quyền đổi vai trò người dùng.', 'error');
+      return;
+    }
+    setIsChangingRole(targetUserId);
+    try {
+      const res = await storageService.updateUserRole(targetUserId, newRole, currentUser);
+      if (res.success) {
+        setUserList(storageService.getUsers(currentUser));
+        onShowToast('Đã đổi vai trò', `Đã cập nhật vai trò tài khoản thành ${newRole}.`, 'success');
+      } else {
+        onShowToast('Lỗi đổi vai trò', res.error, 'error');
+      }
+    } finally {
+      setIsChangingRole(null);
+    }
+  };
 
   const handleSyncUsersToSupabase = async () => {
     setIsSyncingUsers(true);
@@ -66,9 +134,10 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
       if (res.success) {
         onShowToast('Đã đồng bộ lên Supabase', res.message, 'success');
         await checkCloudStatus();
+        await refreshUsersList(false);
       } else {
         onShowToast('Chưa thể lưu lên Supabase', res.message, 'warning');
-        setShowSqlModal(true);
+        setShowSqlGuide(true);
       }
     } finally {
       setIsSyncingUsers(false);
@@ -81,7 +150,7 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
       const report = await storageService.checkSupabaseConnection();
       setConnReport(report);
       if (report.status === 'connected_missing_tables') {
-        setShowSqlModal(true);
+        setShowSqlGuide(true);
       }
     } finally {
       setIsCheckingSupabase(false);
@@ -90,22 +159,13 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
 
   useEffect(() => {
     void checkCloudStatus();
-  }, [checkCloudStatus]);
-
-  const handleCopySql = async () => {
-    try {
-      await navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
-      setCopiedSql(true);
-      onShowToast(
-        'Đã sao chép mã lệnh SQL',
-        'Hãy dán vào SQL Editor trên Supabase và nhấn nút RUN.',
-        'success'
-      );
-      setTimeout(() => setCopiedSql(false), 3000);
-    } catch {
-      onShowToast('Không thể tự động sao chép', 'Vui lòng bôi đen và copy đoạn mã SQL bên dưới.', 'warning');
-    }
-  };
+    void refreshUsersList(false);
+    const unsub = storageService.subscribeDataRefresh(() => {
+      setUserList(storageService.getUsers(currentUser));
+      setUsersLoadError(storageService.getLastUsersError());
+    });
+    return unsub;
+  }, [checkCloudStatus, refreshUsersList, currentUser]);
 
   const handlePushToSupabase = async () => {
     setIsSyncingPush(true);
@@ -122,7 +182,7 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
         await checkCloudStatus();
       } else {
         onShowToast('Chưa thể đẩy dữ liệu', res.message, 'warning');
-        setShowSqlModal(true);
+        setShowSqlGuide(true);
       }
     } finally {
       setIsSyncingPush(false);
@@ -133,14 +193,16 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
     setIsSyncingPull(true);
     try {
       const res = await storageService.pullFromSupabase();
+      setUserList(storageService.getUsers(currentUser));
+      setUsersLoadError(storageService.getLastUsersError());
       if (res.success) {
         onRefreshData();
         onShowToast('Tải dữ liệu từ Supabase thành công', res.message, 'success');
         await checkCloudStatus();
       } else {
-        onShowToast('Chưa thể tải dữ liệu', res.message, 'warning');
+        onShowToast('Chưa thể tải dữ liệu', res.message, 'error');
         if (res.missingTables) {
-          setShowSqlModal(true);
+          setShowSqlGuide(true);
         }
       }
     } finally {
@@ -321,11 +383,11 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
 
             <button
               type="button"
-              onClick={() => setShowSqlModal(prev => !prev)}
-              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-sm"
+              onClick={() => setShowSqlGuide((prev: boolean) => !prev)}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Code2 className="w-4 h-4" />
-              <span>{showSqlModal ? 'Ẩn mã SQL tạo bảng' : 'Mã SQL khởi tạo bảng'}</span>
+              <span>{showSqlGuide ? 'Ẩn mã SQL' : 'Xem mã SQL 4 bước'}</span>
             </button>
           </div>
         </div>
@@ -461,46 +523,156 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
             </div>
           </div>
 
-          {/* SQL Schema Box (Expandable or Auto-shown if tables missing) */}
-          {showSqlModal && (
-            <div className="rounded-2xl border-2 border-amber-400 bg-slate-900 text-slate-100 p-4 sm:p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700 pb-3">
+          {/* HỆ THỐNG 4 BƯỚC MIGRATION SQL & BẢO MẬT SUPABASE */}
+          {showSqlGuide && (
+            <div className="rounded-2xl border-2 border-emerald-500/40 bg-slate-900 text-slate-100 p-4 sm:p-6 space-y-4 shadow-xl">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono text-[10px] font-bold border border-emerald-500/30 uppercase">
+                    Quy trình chuẩn hóa bảo mật 4 bước
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
+                    Có BEGIN/COMMIT cho mỗi bước
+                  </span>
+                </div>
+                <h4 className="text-base font-black text-amber-300 uppercase mt-1 flex items-center gap-2">
+                  <Code2 className="w-5 h-5 text-amber-400" />
+                  MÃ LỆNH SQL THIẾT LẬP CƠ SỞ DỮ LIỆU & BẢO MẬT SUPABASE
+                </h4>
+                <p className="text-xs text-slate-300 mt-1">
+                  Chọn từng bước bên dưới để xem chi tiết, sao chép mã và dán vào Supabase SQL Editor.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs transition flex items-center gap-2 shadow-md cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>MỞ SUPABASE SQL EDITOR</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Step Navigation Tabs */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveSqlStep(1)}
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                  activeSqlStep === 1
+                    ? 'bg-amber-950/80 border-amber-400 text-white shadow-md'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black tracking-wider uppercase text-amber-400">Bước 1</span>
+                  {copiedStepIndex === 1 && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                </div>
+                <div className="text-xs font-bold text-slate-100">8 Bảng Dữ Liệu</div>
+                <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">Khởi tạo cấu trúc các bảng</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSqlStep(2)}
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                  activeSqlStep === 2
+                    ? 'bg-amber-950/80 border-amber-400 text-white shadow-md'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black tracking-wider uppercase text-amber-400">Bước 2</span>
+                  {copiedStepIndex === 2 && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                </div>
+                <div className="text-xs font-bold text-slate-100">RLS & Bảo Mật</div>
+                <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">Schema riêng, is_admin(), VIEWER</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSqlStep(3)}
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                  activeSqlStep === 3
+                    ? 'bg-amber-950/80 border-amber-400 text-white shadow-md'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black tracking-wider uppercase text-amber-400">Bước 3</span>
+                  {copiedStepIndex === 3 && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                </div>
+                <div className="text-xs font-bold text-slate-100">Gán ADMIN Đầu Tiên</div>
+                <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">Dựa trên User UID Auth</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveSqlStep(4)}
+                className={`p-3 rounded-xl border text-left transition cursor-pointer flex flex-col justify-between ${
+                  activeSqlStep === 4
+                    ? 'bg-amber-950/80 border-amber-400 text-white shadow-md'
+                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-black tracking-wider uppercase text-amber-400">Bước 4</span>
+                  {copiedStepIndex === 4 && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                </div>
+                <div className="text-xs font-bold text-slate-100">Làm Sạch Mật Khẩu</div>
+                <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">Sau khi ADMIN đã hoạt động</p>
+              </button>
+            </div>
+
+            {/* Step Details & Code Block */}
+            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-sm font-black text-amber-300 uppercase flex items-center gap-2">
-                    <Database className="w-4 h-4" />
-                    MÃ LỆNH SQL KHỞI TẠO 8 BẢNG DỮ LIỆU TRÊN SUPABASE
-                  </h4>
-                  <p className="text-xs text-slate-300 mt-1">
-                    <strong>Hướng dẫn 3 bước:</strong> (1) Nhấn nút <strong>"Sao chép mã SQL"</strong> bên phải $\rightarrow$ (2) Nhấn <strong>"Mở SQL Editor trên Supabase"</strong> $\rightarrow$ (3) Dán (Ctrl+V) vào khung soạn thảo và bấm nút <strong>RUN</strong> màu xanh.
+                  <div className="text-xs font-bold text-emerald-300">
+                    {activeSqlStep === 1 && 'Bước 1: Khởi tạo cấu trúc 8 bảng nghiệp vụ (BEGIN ... COMMIT)'}
+                    {activeSqlStep === 2 && 'Bước 2: Phân quyền RLS, Schema app_security, Hàm is_admin() & Trigger cố định VIEWER (BEGIN ... COMMIT)'}
+                    {activeSqlStep === 3 && 'Bước 3: Thiết lập tài khoản ADMIN đầu tiên theo User UID trong Supabase Auth (BEGIN ... COMMIT)'}
+                    {activeSqlStep === 4 && 'Bước 4: Chuyển đổi tài khoản cũ & làm sạch mật khẩu đã lưu (BEGIN ... COMMIT)'}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {activeSqlStep === 1 && 'Chạy lệnh này trước tiên để tạo các bảng lưu trữ trên Supabase PostgreSQL.'}
+                    {activeSqlStep === 2 && 'Bảo vệ an toàn: Người đăng ký mới luôn là VIEWER; chỉ ADMIN đổi role người khác; tài khoản thường chỉ xem hồ sơ mình.'}
+                    {activeSqlStep === 3 && 'Chủ dự án copy User UID của tài khoản Admin từ Auth -> Users, dán vào biến v_target_uuid và chạy lệnh. Không tự chọn tài khoản đầu tiên.'}
+                    {activeSqlStep === 4 && 'Điều kiện tiên quyết: Chỉ chạy SAU KHI đã đăng nhập thành công bằng Auth và quyền ADMIN đã hoạt động.'}
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => void handleCopySql()}
-                    className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-sm"
-                  >
-                    {copiedSql ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    <span>{copiedSql ? 'ĐÃ SAO CHÉP!' : '1. SAO CHÉP MÃ SQL'}</span>
-                  </button>
-
-                  <a
-                    href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/sql/new`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 shadow-sm"
-                  >
-                    <span>2. MỞ SQL EDITOR SUPABASE</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const content = 
+                      activeSqlStep === 1 ? SQL_STEP_1_TABLES_SCHEMA :
+                      activeSqlStep === 2 ? SQL_STEP_2_SECURITY_AND_RLS :
+                      activeSqlStep === 3 ? SQL_STEP_3_SET_FIRST_ADMIN :
+                      SQL_STEP_4_MIGRATE_AND_CLEANUP;
+                    const title = `SQL Bước ${activeSqlStep}`;
+                    void handleCopyStep(activeSqlStep, content, title);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition flex items-center gap-1.5 shadow-sm shrink-0 cursor-pointer"
+                >
+                  {copiedStepIndex === activeSqlStep ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedStepIndex === activeSqlStep ? 'ĐÃ SAO CHÉP!' : `SAO CHÉP MÃ BƯỚC ${activeSqlStep}`}</span>
+                </button>
               </div>
 
-              <pre className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-[11px] font-mono text-emerald-300 overflow-x-auto max-h-80 leading-relaxed select-all">
-                {SUPABASE_SQL_SCHEMA}
+              <pre className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 text-[11px] font-mono text-emerald-300 overflow-x-auto max-h-80 leading-relaxed select-all">
+                {activeSqlStep === 1 && SQL_STEP_1_TABLES_SCHEMA}
+                {activeSqlStep === 2 && SQL_STEP_2_SECURITY_AND_RLS}
+                {activeSqlStep === 3 && SQL_STEP_3_SET_FIRST_ADMIN}
+                {activeSqlStep === 4 && SQL_STEP_4_MIGRATE_AND_CLEANUP}
               </pre>
             </div>
+          </div>
           )}
         </div>
       </div>
@@ -537,7 +709,7 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
         </div>
       </div>
 
-      {/* Danh sách tài khoản cán bộ đã đăng ký trên hệ thống */}
+      {/* Danh sách tài khoản cán bộ trên hệ thống */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -547,39 +719,54 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-black text-slate-900 uppercase">
-                  Tài Khoản Cán Bộ Trên Hệ Thống
+                  {currentUser.role === 'ADMIN' ? 'Quản Lý Danh Sách Tài Khoản Cán Bộ' : 'Hồ Sơ Cán Bộ Của Bạn'}
                 </h3>
                 <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                   {userList.length} tài khoản
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Cán bộ có thể tự đăng ký bằng tên đăng nhập & mật khẩu tại màn hình Đăng nhập
+                {currentUser.role === 'ADMIN'
+                  ? 'Quản trị viên có quyền thay đổi vai trò (role) của cán bộ hoặc xóa tài khoản'
+                  : 'Tài khoản thường chỉ có quyền xem hồ sơ của chính mình'}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-            <button
-              type="button"
-              onClick={() => void handleSyncUsersToSupabase()}
-              disabled={isSyncingUsers}
-              className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
-            >
-              <ArrowUpFromLine className={`w-3.5 h-3.5 ${isSyncingUsers ? 'animate-bounce' : ''}`} />
-              <span>{isSyncingUsers ? 'Đang lưu lên Supabase...' : 'Lưu tài khoản lên Supabase ngay'}</span>
-            </button>
+            {currentUser.role === 'ADMIN' && (
+              <button
+                type="button"
+                onClick={() => void handleSyncUsersToSupabase()}
+                disabled={isSyncingUsers}
+                className="px-3.5 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                <ArrowUpFromLine className={`w-3.5 h-3.5 ${isSyncingUsers ? 'animate-bounce' : ''}`} />
+                <span>{isSyncingUsers ? 'Đang lưu lên Supabase...' : 'Lưu tài khoản lên Supabase ngay'}</span>
+              </button>
+            )}
 
             <button
               type="button"
-              onClick={() => setUserList(storageService.getUsers())}
-              className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+              onClick={() => void refreshUsersList(true)}
+              disabled={isLoadingUsers}
+              className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Làm mới danh sách</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingUsers ? 'animate-spin' : ''}`} />
+              <span>{isLoadingUsers ? 'Đang tải...' : 'Làm mới danh sách'}</span>
             </button>
           </div>
         </div>
+
+        {usersLoadError && (
+          <div className="mx-4 sm:mx-5 mt-4 p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-bold">Lỗi truy vấn danh sách tài khoản từ Supabase (public.users):</div>
+              <p className="mt-0.5 font-mono text-[11px] text-rose-800 break-all">{usersLoadError}</p>
+            </div>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -587,7 +774,7 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
               <tr>
                 <th className="py-3 px-4">Tên đăng nhập</th>
                 <th className="py-3 px-4">Họ và tên</th>
-                <th className="py-3 px-4">Vai trò</th>
+                <th className="py-3 px-4">Vai trò (Phân quyền)</th>
                 <th className="py-3 px-4">Chức vụ & Đơn vị</th>
                 <th className="py-3 px-4">Số điện thoại</th>
                 <th className="py-3 px-4">Ngày tạo</th>
@@ -595,100 +782,135 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-800">
-              {userList.map((u) => {
-                const isAdmin = u.role === 'ADMIN' || u.username.toLowerCase() === 'admin';
-                return (
-                  <tr key={u.id} className="hover:bg-slate-50/80 transition">
-                    <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                      {u.username}
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-900">
-                      {u.fullName}
-                    </td>
-                    <td className="py-3 px-4">
-                      {u.role === 'ADMIN' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
-                          <Shield className="w-3 h-3" />
-                          ADMIN
-                        </span>
-                      )}
-                      {u.role === 'MANAGER' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
-                          <UserCheck className="w-3 h-3" />
-                          QUẢN LÝ
-                        </span>
-                      )}
-                      {u.role === 'VIEWER' && (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                          <Users className="w-3 h-3" />
-                          TRA CỨU
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-slate-600">
-                      <div>{u.chucVu}</div>
-                      <div className="text-[11px] text-slate-400">{u.donVi}</div>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-600">
-                      {u.soDienThoai || 'Chưa cập nhật'}
-                    </td>
-                    <td className="py-3 px-4 text-slate-500 text-[11px]">
-                      {new Date(u.createdAt).toLocaleDateString('vi-VN')}
-                    </td>
-                    {currentUser.role === 'ADMIN' && (
-                      <td className="py-3 px-4 text-center">
-                        {isAdmin ? (
-                          <span className="text-[11px] text-slate-400 italic">Mặc định</span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (window.confirm(`Bạn có chắc chắn muốn xóa tài khoản "${u.username}" (${u.fullName}) không?`)) {
-                                const res = storageService.deleteUser(u.id);
-                                if (res.success) {
-                                  setUserList(storageService.getUsers());
-                                  onShowToast('Đã xóa tài khoản', `Đã xóa tài khoản "${u.username}" khỏi hệ thống.`, 'info');
-                                } else {
-                                  onShowToast('Lỗi', res.error, 'error');
-                                }
-                              }
-                            }}
-                            className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition"
-                            title="Xóa tài khoản này"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+              {userList.length === 0 ? (
+                <tr>
+                  <td colSpan={currentUser.role === 'ADMIN' ? 7 : 6} className="py-8 text-center text-slate-400">
+                    {usersLoadError
+                      ? `Không thể tải danh sách tài khoản: ${usersLoadError}`
+                      : 'Chưa có tài khoản nào được ghi nhận.'}
+                  </td>
+                </tr>
+              ) : (
+                userList.map((u) => {
+                  const isSelf = u.id === currentUser.id;
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50/80 transition">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
+                        {u.username || 'Chưa cập nhật'}
+                        {isSelf && (
+                          <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                            Bạn
+                          </span>
                         )}
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
+                      <td className="py-3 px-4 font-semibold text-slate-900">
+                        {u.fullName || 'Chưa cập nhật'}
+                      </td>
+                      <td className="py-3 px-4">
+                        {currentUser.role === 'ADMIN' ? (
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={u.role}
+                              disabled={isSelf || isChangingRole === u.id}
+                              onChange={(e) => void handleRoleChange(u.id, e.target.value as UserRole)}
+                              className="text-xs font-bold py-1 px-2.5 rounded-lg border bg-white text-slate-800 border-slate-300 focus:outline-none focus:border-red-500 cursor-pointer disabled:bg-slate-100 disabled:opacity-75 disabled:cursor-not-allowed transition"
+                              title={isSelf ? 'Không thể tự thay đổi vai trò của tài khoản đang đăng nhập' : 'Chọn để thay đổi vai trò'}
+                            >
+                              <option value="VIEWER">VIEWER (Tra cứu)</option>
+                              <option value="MANAGER">MANAGER (Quản lý)</option>
+                              <option value="ADMIN">ADMIN (Quản trị)</option>
+                            </select>
+                            {isChangingRole === u.id && (
+                              <span className="w-3.5 h-3.5 border-2 border-red-600 border-t-transparent rounded-full animate-spin shrink-0" />
+                            )}
+                          </div>
+                        ) : (
+                          <span>
+                            {u.role === 'ADMIN' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
+                                <Shield className="w-3 h-3" /> ADMIN
+                              </span>
+                            )}
+                            {u.role === 'MANAGER' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+                                <UserCheck className="w-3 h-3" /> QUẢN LÝ
+                              </span>
+                            )}
+                            {u.role === 'VIEWER' && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                <Users className="w-3 h-3" /> TRA CỨU
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600">
+                        <div>{u.chucVu || 'Chưa cập nhật'}</div>
+                        <div className="text-[11px] text-slate-400">{u.donVi || 'Chưa cập nhật'}</div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-600">
+                        {u.soDienThoai || 'Chưa cập nhật'}
+                      </td>
+                      <td className="py-3 px-4 text-slate-500 text-[11px]">
+                        {formatUserDateVN(u.createdAt)}
+                      </td>
+                      {currentUser.role === 'ADMIN' && (
+                        <td className="py-3 px-4 text-center">
+                          {isSelf ? (
+                            <span className="text-[11px] text-slate-400 italic">Hiện tại</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Bạn có chắc chắn muốn xóa tài khoản "${u.username}" (${u.fullName}) không?`)) {
+                                  const res = storageService.deleteUser(u.id, currentUser);
+                                  if (res.success) {
+                                    setUserList(storageService.getUsers(currentUser));
+                                    onShowToast('Đã xóa tài khoản', `Đã xóa tài khoản "${u.username}" khỏi hệ thống.`, 'info');
+                                  } else {
+                                    onShowToast('Lỗi', res.error, 'error');
+                                  }
+                                }
+                              }}
+                              className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition cursor-pointer"
+                              title="Xóa tài khoản này"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
 
-        {/* Hướng dẫn chi tiết lưu trữ tài khoản trên Supabase */}
+        {/* Chú thích bảo mật */}
         <div className="p-4 bg-emerald-50/60 border-t border-emerald-200 text-xs text-emerald-950 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex items-start gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold">Cách xem và lưu trữ tài khoản trên đám mây Supabase:</span>
+              <span className="font-bold">Bảo mật tài khoản xác thực Supabase Auth & RLS:</span>
               <p className="text-slate-600 text-[11px] mt-0.5 leading-relaxed">
-                Khi bất kỳ cán bộ nào đăng ký tài khoản mới, hệ thống tự động lưu vào bảng <strong>public.users</strong> trên Supabase (chứa cột <code className="font-mono bg-white px-1 py-0.5 rounded border border-emerald-300">username</code>, <code className="font-mono bg-white px-1 py-0.5 rounded border border-emerald-300">full_name</code>, <code className="font-mono bg-white px-1 py-0.5 rounded border border-emerald-300">password_hash</code>, <code className="font-mono bg-white px-1 py-0.5 rounded border border-emerald-300">role</code>). Bạn cũng có thể bấm nút <strong>"Lưu tài khoản lên Supabase ngay"</strong> ở trên bất kỳ lúc nào.
+                Tài khoản đăng ký mới luôn là <strong>VIEWER</strong>. Mật khẩu được mã hóa an toàn trên hệ thống Supabase Auth, tuyệt đối không gửi hay lưu mật khẩu vào bảng users. Hàm bảo mật nội bộ <code className="font-mono bg-white px-1 py-0.5 rounded border border-emerald-300">app_security.is_admin()</code> kiểm soát chặt chẽ quyền cập nhật vai trò người dùng.
               </p>
             </div>
           </div>
 
-          <a
-            href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/editor`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-emerald-300 text-emerald-900 font-bold text-[11px] shadow-xs transition flex items-center gap-1.5 shrink-0 self-start md:self-center"
-          >
-            <span>Mở Table Editor trên Supabase</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
+            <a
+              href={`https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/editor`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-emerald-300 text-emerald-900 font-bold text-[11px] shadow-xs transition flex items-center gap-1.5"
+            >
+              <span>Mở Table Editor</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
       </div>
 

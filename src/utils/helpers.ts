@@ -58,13 +58,34 @@ export function formatDateVN(dateStr?: string): string {
 }
 
 /**
+ * Định dạng ngày tạo tài khoản (createdAt) sang DD/MM/YYYY.
+ * Ngày thiếu hoặc không hợp lệ hiển thị "Chưa cập nhật"; không tự lấy ngày hiện tại.
+ */
+export function formatUserDateVN(dateStr?: string | null): string {
+  if (!dateStr || typeof dateStr !== 'string' || dateStr.trim() === '') {
+    return 'Chưa cập nhật';
+  }
+  const d = new Date(dateStr.trim());
+  if (Number.isNaN(d.getTime())) {
+    return 'Chưa cập nhật';
+  }
+  return d.toLocaleDateString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
+/**
  * Định dạng ngày giờ đầy đủ
  */
-export function formatDateTimeVN(dateTimeStr?: string): string {
-  if (!dateTimeStr) return '—';
+export function formatDateTimeVN(dateTimeStr?: string | null): string {
+  if (!dateTimeStr || typeof dateTimeStr !== 'string' || dateTimeStr.trim() === '') {
+    return 'Chưa cập nhật';
+  }
   try {
-    const d = new Date(dateTimeStr);
-    if (!isNaN(d.getTime())) {
+    const d = new Date(dateTimeStr.trim());
+    if (!Number.isNaN(d.getTime())) {
       return d.toLocaleString('vi-VN', {
         hour: '2-digit',
         minute: '2-digit',
@@ -77,7 +98,7 @@ export function formatDateTimeVN(dateTimeStr?: string): string {
   } catch {
     // fallback
   }
-  return dateTimeStr;
+  return 'Chưa cập nhật';
 }
 
 export interface ServiceDurationResult {

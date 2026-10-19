@@ -15,11 +15,13 @@ import {
   Phone, 
   Briefcase, 
   BadgeCheck,
-  ShieldAlert
+  Mail,
+  HelpCircle,
+  Database
 } from 'lucide-react';
 import { UserAccount, UserRole } from '../types';
 import { storageService, SYSTEM_MANAGER_INFO } from '../services/storage';
-import { hashPassword } from '../utils/security';
+import { supabase, SUPABASE_TABLES } from '../services/supabaseClient';
 
 interface LoginProps {
   onLoginSuccess: (user: UserAccount) => void;
@@ -30,20 +32,21 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
 
   // Login form state
-  const [username, setUsername] = useState('Admin');
-  const [password, setPassword] = useState('Tuan@123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showAdminGuide, setShowAdminGuide] = useState(false);
 
   // Register form state
   const [regUsername, setRegUsername] = useState('');
+  const [regEmail, setRegEmail] = useState('');
   const [regFullName, setRegFullName] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [showRegPassword, setShowRegPassword] = useState(false);
   const [showRegConfirmPassword, setShowRegConfirmPassword] = useState(false);
-  const [regRole, setRegRole] = useState<UserRole>('VIEWER');
   const [regChucVu, setRegChucVu] = useState('Cán bộ Công an xã');
   const [regDonVi, setRegDonVi] = useState('Công an xã Lai Vung');
   const [regPhone, setRegPhone] = useState('');
@@ -52,61 +55,102 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [regSuccess, setRegSuccess] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
 
-  // Xử lý Đăng nhập
+  // Xử lý Đăng nhập qua Supabase Auth
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
 
-    const cleanUsername = username.trim();
-    if (!cleanUsername || !password.trim()) {
-      setLoginError('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
+    const cleanInput = username.trim();
+    if (!cleanInput || !password.trim()) {
+      setLoginError('Vui lòng nhập đầy đủ tên đăng nhập / email và mật khẩu.');
       return;
     }
 
     setIsLoggingIn(true);
 
     try {
-      const users = storageService.getUsers();
-      const user = users.find(u => u.username.toLowerCase() === cleanUsername.toLowerCase());
-      const inputHash = await hashPassword(password);
+      // 1. Chuẩn hóa địa chỉ email để xác thực với Supabase Auth
+      let authEmail = cleanInput;
+      if (!authEmail.includes('@')) {
+        // Tìm xem người dùng có email đã lưu trong danh sách hồ sơ local không
+        const localUser = storageService.getUsers().find(
+          u => u.username.toLowerCase() === cleanInput.toLowerCase()
+        );
+        if (localUser && localUser.email) {
+          authEmail = localUser.email;
+        } else {
+          authEmail = `${cleanInput.toLowerCase()}@laivung.antt.local`;
+        }
+      }
 
-      // Kiểm tra mật khẩu (hỗ trợ Tuan@123 cho Admin, 123456, hash hoặc passwordHash)
-      const isMatch = user && (
-        password === 'Tuan@123' ||
-        password === '123456' || 
-        user.passwordHash === password ||
-        user.passwordHash === inputHash ||
-        user.passwordHash === '123456_hashed_secure'
+      // 2. Xác thực tài khoản trực tiếp qua Supabase Auth (Không có điều kiện vượt mật khẩu dùng chung)
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: password,
+      });
+
+      if (authError || !authData.user) {
+        setIsLoggingIn(false);
+        if (authError?.message?.includes('Invalid login credentials')) {
+          setLoginError('Tên đăng nhập / Email hoặc mật khẩu không chính xác! Vui lòng kiểm tra lại.');
+        } else if (authError?.message?.includes('Email not confirmed')) {
+          setLoginError('Tài khoản chưa được xác nhận email. Quản trị viên vui lòng xác nhận tài khoản trong Supabase Auth hoặc tắt tùy chọn Confirm Email.');
+        } else {
+          setLoginError(`Lỗi xác thực: ${authError?.message || 'Không thể đăng nhập qua Supabase Auth.'}`);
+        }
+        return;
+      }
+
+      // 3. Đọc thông tin hồ sơ cán bộ từ bảng public.users (Không truy vấn cột mật khẩu)
+      const { data: profile, error: profileError } = await supabase
+        .from(SUPABASE_TABLES.USERS)
+        .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
+        .eq('id', authData.user.id)
+        .maybeSingle();
+
+      if (profileError) {
+        console.warn('Không thể tải hồ sơ public.users khi đăng nhập:', profileError.message);
+      }
+
+      const fallbackRole: UserRole = 'VIEWER';
+      const userAccount: UserAccount = storageService.fromUserRow(profile || {}, {
+        id: authData.user.id,
+        username: authData.user.user_metadata?.username || cleanInput,
+        email: authData.user.email,
+        fullName: authData.user.user_metadata?.full_name || cleanInput,
+        role: fallbackRole,
+        chucVu: authData.user.user_metadata?.chuc_vu || 'Cán bộ Công an xã',
+        donVi: authData.user.user_metadata?.don_vi || 'Công an xã Lai Vung',
+        soDienThoai: authData.user.user_metadata?.so_dien_thoai || '',
+        createdAt: authData.user.created_at || '',
+        lastLoginAt: new Date().toISOString(),
+      });
+
+      // Tự động tạo hồ sơ mặc định là VIEWER nếu tài khoản chưa có trong public.users (và truy vấn không bị lỗi)
+      if (!profile && !profileError) {
+        void supabase
+          .from(SUPABASE_TABLES.USERS)
+          .upsert(storageService.toUserRow({ ...userAccount, role: 'VIEWER' }), { onConflict: 'id' });
+      }
+
+      storageService.setCurrentUser(userAccount);
+
+      storageService.addAuditLog(
+        userAccount,
+        'DANG_NHAP',
+        `Tài khoản: ${userAccount.username} (${userAccount.fullName})`,
+        `Đăng nhập thành công với vai trò ${userAccount.role} - Đơn vị: ${userAccount.donVi}`
       );
 
-      if (user && isMatch) {
-        const updatedUser: UserAccount = {
-          ...user,
-          lastLoginAt: new Date().toISOString(),
-        };
-
-        storageService.setCurrentUser(updatedUser);
-
-        storageService.addAuditLog(
-          updatedUser,
-          'DANG_NHAP',
-          `Tài khoản: ${updatedUser.username} (${updatedUser.fullName})`,
-          `Đăng nhập thành công với vai trò ${updatedUser.role} - Đơn vị: ${updatedUser.donVi}`
-        );
-
-        setIsLoggingIn(false);
-        onLoginSuccess(updatedUser);
-      } else {
-        setIsLoggingIn(false);
-        setLoginError('Tên đăng nhập hoặc mật khẩu không chính xác! Vui lòng thử lại.');
-      }
-    } catch {
       setIsLoggingIn(false);
-      setLoginError('Có lỗi xảy ra khi xác thực tài khoản. Vui lòng thử lại!');
+      onLoginSuccess(userAccount);
+    } catch (err: any) {
+      setIsLoggingIn(false);
+      setLoginError(err?.message || 'Có lỗi xảy ra khi xác thực tài khoản qua Supabase Auth.');
     }
   };
 
-  // Xử lý Đăng ký tài khoản
+  // Xử lý Đăng ký tài khoản mới qua Supabase Auth
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
@@ -116,6 +160,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const cleanFullName = regFullName.trim();
     const cleanPassword = regPassword;
     const cleanConfirm = regConfirmPassword;
+    const cleanEmail = regEmail.trim();
 
     // Validation
     if (!cleanUsername) {
@@ -144,7 +189,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
 
     if (cleanPassword.length < 6) {
-      setRegError('Mật khẩu phải có tối thiểu 6 ký tự để đảm bảo an toàn nghiệp vụ.');
+      setRegError('Mật khẩu phải có tối thiểu 6 ký tự để bảo đảm an toàn nghiệp vụ.');
       return;
     }
 
@@ -156,11 +201,13 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     setIsRegistering(true);
 
     try {
+      // YÊU CẦU 1: Người đăng ký mới LUÔN LUÔN là VIEWER. Không nhận quyền từ client, không tự nhận ADMIN
       const res = await storageService.registerUser({
         username: cleanUsername,
+        email: cleanEmail || undefined,
         password: cleanPassword,
         fullName: cleanFullName,
-        role: regRole,
+        role: 'VIEWER',
         chucVu: regChucVu,
         donVi: regDonVi,
         soDienThoai: regPhone,
@@ -173,25 +220,26 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      setRegSuccess(`Đăng ký tài khoản "${res.user.username}" thành công!`);
+      if (res.requireEmailConfirmation) {
+        setRegSuccess(
+          `Đăng ký tài khoản "${res.user.username}" thành công trên Supabase Auth! Vui lòng xác nhận email hoặc quản trị viên kích hoạt tài khoản trước khi đăng nhập.`
+        );
+        setActiveTab('login');
+        setUsername(cleanUsername);
+        return;
+      }
+
+      setRegSuccess(`Đăng ký tài khoản "${res.user.username}" thành công trên Supabase Auth!`);
 
       if (autoLogin) {
-        // Tự động đăng nhập luôn
         const registeredUser = res.user;
         const loggedInUser: UserAccount = {
           ...registeredUser,
           lastLoginAt: new Date().toISOString(),
         };
         storageService.setCurrentUser(loggedInUser);
-        storageService.addAuditLog(
-          loggedInUser,
-          'DANG_NHAP',
-          `Tài khoản: ${loggedInUser.username} (${loggedInUser.fullName})`,
-          `Tự động đăng nhập sau khi hoàn tất đăng ký tài khoản mới`
-        );
         onLoginSuccess(loggedInUser);
       } else {
-        // Chuyển sang tab Đăng nhập và điền sẵn thông tin
         setTimeout(() => {
           setUsername(cleanUsername);
           setPassword(cleanPassword);
@@ -199,21 +247,21 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           setLoginError('');
         }, 1200);
       }
-    } catch {
+    } catch (err: any) {
       setIsRegistering(false);
-      setRegError('Có lỗi xảy ra trong quá trình đăng ký tài khoản. Vui lòng thử lại!');
+      setRegError(err?.message || 'Có lỗi xảy ra trong quá trình đăng ký tài khoản. Vui lòng thử lại!');
     }
   };
 
-  const handleQuickLogin = (uname: string, pwd = '123456') => {
+  const handleSelectUsernameHelper = (uname: string) => {
     setUsername(uname);
-    setPassword(pwd);
+    setPassword('');
     setLoginError('');
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f2faee] via-[#edf7e5] to-[#dff1d3] flex flex-col justify-center items-center px-4 py-8 relative overflow-hidden">
-      {/* Background Police Grid Pattern & Ambient Glow with Young Rice Leaf Tones */}
+      {/* Background Police Grid Pattern & Ambient Glow */}
       <div className="absolute inset-0 bg-[radial-gradient(#4d7c0f_1px,transparent_1px)] [background-size:24px_24px] opacity-15 pointer-events-none" />
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-lime-400/30 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
@@ -289,11 +337,21 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         {/* ===================== TAB 1: FORM ĐĂNG NHẬP ===================== */}
         {activeTab === 'login' && (
           <div className="animate-in fade-in duration-200">
-            {/* Contact info for System Administrator */}
+            {/* Contact info for System Administrator (Không hiển thị mật khẩu Admin) */}
             <div className="mt-4 p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-left">
-              <div className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5 uppercase tracking-wide">
-                <PhoneCall className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>Quản trị hệ thống & Hỗ trợ kỹ thuật</span>
+              <div className="text-[11px] font-bold text-amber-400 flex items-center justify-between uppercase tracking-wide">
+                <div className="flex items-center gap-1.5">
+                  <PhoneCall className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Quản trị hệ thống & Hỗ trợ kỹ thuật</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdminGuide(!showAdminGuide)}
+                  className="text-[10px] text-amber-300 hover:text-amber-200 underline font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <HelpCircle className="w-3 h-3" />
+                  <span>{showAdminGuide ? 'Ẩn hướng dẫn ADMIN' : 'HD thiết lập ADMIN'}</span>
+                </button>
               </div>
               <div className="mt-2 text-xs text-slate-200 space-y-1">
                 <div>
@@ -312,12 +370,33 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <span>{SYSTEM_MANAGER_INFO.phone}</span>
                   </a>
                 </div>
-                <div className="text-[11px] text-slate-400 pt-0.5 border-t border-amber-500/20 flex flex-wrap gap-x-3">
-                  <span>Tài khoản: <strong className="text-white font-mono">{SYSTEM_MANAGER_INFO.adminUsername}</strong></span>
-                  <span>Mật khẩu: <strong className="text-amber-300 font-mono">{SYSTEM_MANAGER_INFO.adminPassword}</strong></span>
+                <div className="text-[11px] text-slate-400 pt-0.5 border-t border-amber-500/20">
+                  <span>Tài khoản Quản trị: <strong className="text-white font-mono">{SYSTEM_MANAGER_INFO.adminUsername}</strong></span>
+                  <span className="ml-2 text-emerald-400 font-medium">• Xác thực trực tiếp qua Supabase Auth</span>
                 </div>
               </div>
             </div>
+
+            {/* Admin Supabase Auth Guide Collapsible */}
+            {showAdminGuide && (
+              <div className="mt-3 p-3 rounded-2xl bg-slate-950 border border-amber-500/50 text-xs text-slate-300 space-y-2 animate-in fade-in duration-200">
+                <div className="font-bold text-amber-300 flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Hướng dẫn thiết lập tài khoản Quản trị viên (ADMIN) đầu tiên:</span>
+                </div>
+                <ol className="list-decimal pl-4 space-y-1 text-[11px] text-slate-300 leading-relaxed">
+                  <li>
+                    <strong>Cách 1:</strong> Đăng ký tài khoản trên tab &quot;Đăng ký tài khoản&quot; với tên đăng nhập (vd: <code className="text-amber-300 font-mono">admin</code>) và mật khẩu cá nhân. Sau đó mở <strong>SQL Editor</strong> trên Supabase chạy lệnh:
+                    <div className="p-1.5 bg-slate-900 rounded font-mono text-[10px] text-emerald-300 mt-1 select-all">
+                      UPDATE public.users SET role = &apos;ADMIN&apos; WHERE username = &apos;admin&apos;;
+                    </div>
+                  </li>
+                  <li>
+                    <strong>Cách 2:</strong> Vào Supabase Dashboard $\rightarrow$ mục <strong>Authentication</strong> $\rightarrow$ bấm <strong>Add User</strong> để tạo tài khoản, sau đó gán quyền ADMIN trong bảng <code className="text-amber-300 font-mono">public.users</code>.
+                  </li>
+                </ol>
+              </div>
+            )}
 
             {/* Error Alert */}
             {loginError && (
@@ -331,7 +410,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <form onSubmit={handleLoginSubmit} className="mt-4 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Tên tài khoản (Tên đăng nhập)
+                  Tên đăng nhập hoặc Email cán bộ
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
@@ -342,8 +421,9 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     id="login-username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Nhập tên đăng nhập (vd: Admin hoặc tài khoản đã đăng ký)"
+                    placeholder="Nhập tên đăng nhập hoặc Email cán bộ"
                     className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition"
+                    required
                   />
                 </div>
               </div>
@@ -363,13 +443,14 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     id="login-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Nhập mật khẩu (vd: Tuan@123)"
+                    placeholder="Nhập mật khẩu tài khoản"
                     className="w-full pl-9 pr-10 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 transition"
+                    required
                   />
                   <button
                     type="button"
                     onClick={() => setShowLoginPassword(!showLoginPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-200 transition"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-200 transition cursor-pointer"
                     title={showLoginPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
                   >
                     {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -411,17 +492,16 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               </button>
             </div>
 
-            {/* Demo Fast-Login Selector */}
+            {/* Điền nhanh tên đăng nhập mẫu (Không vượt mật khẩu) */}
             <div className="mt-5 pt-4 border-t border-slate-800">
-              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2.5 text-center">
-                Chọn nhanh vai trò mẫu để trải nghiệm
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 text-center">
+                Điền nhanh tên tài khoản mẫu
               </p>
-
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  id="demo-login-admin"
-                  onClick={() => handleQuickLogin('Admin', 'Tuan@123')}
+                  id="demo-username-admin"
+                  onClick={() => handleSelectUsernameHelper('Admin')}
                   className={`p-2 rounded-lg border text-left transition cursor-pointer ${
                     username.toLowerCase() === 'admin'
                       ? 'bg-red-950/60 border-red-500/60 text-white'
@@ -429,13 +509,13 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   }`}
                 >
                   <div className="text-[11px] font-bold text-red-400">ADMIN</div>
-                  <div className="text-[10px] text-slate-300 font-medium truncate">Đ/c Trần Thanh Tuấn</div>
+                  <div className="text-[10px] text-slate-400 truncate">Trung tá Tuấn</div>
                 </button>
 
                 <button
                   type="button"
-                  id="demo-login-manager"
-                  onClick={() => handleQuickLogin('canbo_quanly', '123456')}
+                  id="demo-username-manager"
+                  onClick={() => handleSelectUsernameHelper('canbo_quanly')}
                   className={`p-2 rounded-lg border text-left transition cursor-pointer ${
                     username === 'canbo_quanly'
                       ? 'bg-blue-950/60 border-blue-500/60 text-white'
@@ -443,13 +523,13 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   }`}
                 >
                   <div className="text-[11px] font-bold text-blue-400">CÁN BỘ QL</div>
-                  <div className="text-[10px] text-slate-400 truncate">Đại úy Lê H. Minh</div>
+                  <div className="text-[10px] text-slate-400 truncate">Đại úy Minh</div>
                 </button>
 
                 <button
                   type="button"
-                  id="demo-login-viewer"
-                  onClick={() => handleQuickLogin('canbo_xem', '123456')}
+                  id="demo-username-viewer"
+                  onClick={() => handleSelectUsernameHelper('canbo_xem')}
                   className={`p-2 rounded-lg border text-left transition cursor-pointer ${
                     username === 'canbo_xem'
                       ? 'bg-emerald-950/60 border-emerald-500/60 text-white'
@@ -457,9 +537,12 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   }`}
                 >
                   <div className="text-[11px] font-bold text-emerald-400">TRA CỨU</div>
-                  <div className="text-[10px] text-slate-400 truncate">Thượng úy N.V. Hậu</div>
+                  <div className="text-[10px] text-slate-400 truncate">Thượng úy Hậu</div>
                 </button>
               </div>
+              <p className="text-[10px] text-slate-500 text-center mt-2 italic">
+                * Xác thực an toàn qua Supabase Auth. Vui lòng nhập đúng mật khẩu của tài khoản.
+              </p>
             </div>
           </div>
         )}
@@ -470,10 +553,10 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             <div className="mt-3 p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-left">
               <div className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5 uppercase tracking-wide">
                 <BadgeCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                <span>Đăng ký tài khoản cán bộ nghiệp vụ mới</span>
+                <span>Đăng ký tài khoản xác thực Supabase Auth</span>
               </div>
               <p className="text-[11px] text-slate-300 mt-1 leading-relaxed">
-                Tạo tài khoản cá nhân bằng <strong>tên đăng nhập</strong> và <strong>mật khẩu</strong> để truy cập và làm việc trên cơ sở dữ liệu ANTT cơ sở xã Lai Vung.
+                Tài khoản được bảo mật và xác thực độc quyền bởi <strong>Supabase Auth</strong>. Bảng dữ liệu nội bộ chỉ lưu trữ hồ sơ công tác, không lưu mật khẩu.
               </p>
             </div>
 
@@ -495,26 +578,46 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
             {/* Register Form */}
             <form onSubmit={handleRegisterSubmit} className="mt-3.5 space-y-3.5">
-              {/* Tên đăng nhập */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Tên đăng nhập <span className="text-red-400">*</span>
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                    <User className="w-4 h-4" />
+              {/* Tên đăng nhập & Email */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Tên đăng nhập <span className="text-red-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      id="register-username"
+                      value={regUsername}
+                      onChange={(e) => setRegUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                      placeholder="vd: letuan, canbo_antt"
+                      className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition font-mono"
+                      required
+                    />
                   </div>
-                  <input
-                    type="text"
-                    id="register-username"
-                    value={regUsername}
-                    onChange={(e) => setRegUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
-                    placeholder="vd: canbo_antt, letuan, nguyenvanan..."
-                    className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition font-mono"
-                    required
-                  />
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Viết liền không dấu, từ 3 ký tự trở lên (dùng để đăng nhập hệ thống)</p>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Email cán bộ <span className="text-slate-400 font-normal">(tùy chọn)</span>
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="email"
+                      id="register-email"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value.trim())}
+                      placeholder="vd: letuan@gmail.com"
+                      className="w-full pl-9 pr-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition font-mono"
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Họ và tên cán bộ */}
@@ -560,7 +663,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <button
                       type="button"
                       onClick={() => setShowRegPassword(!showRegPassword)}
-                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-200 transition"
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-200 transition cursor-pointer"
                     >
                       {showRegPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
@@ -591,7 +694,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <button
                       type="button"
                       onClick={() => setShowRegConfirmPassword(!showRegConfirmPassword)}
-                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-200 transition"
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-200 transition cursor-pointer"
                     >
                       {showRegConfirmPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
@@ -602,44 +705,18 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 </div>
               </div>
 
-              {/* Vai trò & Quyền hạn phân quyền */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Vai trò & Quyền hạn truy cập <span className="text-red-400">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRegRole('VIEWER')}
-                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                      regRole === 'VIEWER'
-                        ? 'bg-emerald-950/60 border-emerald-500 text-white'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="text-xs font-bold text-emerald-400 flex items-center justify-between">
-                      <span>Cán bộ Tra cứu (VIEWER)</span>
-                      {regRole === 'VIEWER' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Tra cứu, xem hồ sơ nhân sự, in báo cáo</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRegRole('MANAGER')}
-                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                      regRole === 'MANAGER'
-                        ? 'bg-blue-950/60 border-blue-500 text-white'
-                        : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="text-xs font-bold text-blue-400 flex items-center justify-between">
-                      <span>Cán bộ Quản lý (MANAGER)</span>
-                      {regRole === 'MANAGER' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-0.5">Thêm, sửa, xóa, duyệt hồ sơ ANTT</p>
-                  </button>
+              {/* Vai trò khởi tạo mặc định: Cán bộ Tra cứu (VIEWER) */}
+              <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-700/80">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">Vai trò khởi tạo mặc định:</span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/60 text-emerald-300 font-bold text-xs">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    Cán bộ Tra cứu (VIEWER)
+                  </span>
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                  * Mọi tài khoản mới đăng ký đều nhận quyền <strong>VIEWER</strong>. Chỉ Quản trị viên (ADMIN) mới có thẩm quyền phân quyền nâng cao trên hệ thống.
+                </p>
               </div>
 
               {/* Chức vụ & Đơn vị & SĐT */}
@@ -728,7 +805,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 ) : (
                   <>
                     <UserPlus className="w-4 h-4" />
-                    <span>HOÀN TẤT ĐĂNG KÝ TÀI KHOẢN</span>
+                    <span>HOÀN TẤT ĐĂNG KÝ VỚI SUPABASE AUTH</span>
                   </>
                 )}
               </button>

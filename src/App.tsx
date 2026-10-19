@@ -9,6 +9,7 @@ import {
   DismissMemberData
 } from './types';
 import { storageService } from './services/storage';
+import { supabase, SUPABASE_TABLES } from './services/supabaseClient';
 import { Header } from './components/layout/Header';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { ToastContainer } from './components/common/Toast';
@@ -85,12 +86,84 @@ export default function App() {
     setDiaBanList(storageService.getDiaBan());
     setToANTTList(storageService.getToANTT());
     setAuditLogs(storageService.getAuditLogs());
+    const storedUser = storageService.getCurrentUser();
+    if (storedUser) {
+      setCurrentUser(prev => {
+        if (
+          prev &&
+          prev.id === storedUser.id &&
+          prev.username === storedUser.username &&
+          prev.email === storedUser.email &&
+          prev.fullName === storedUser.fullName &&
+          prev.role === storedUser.role &&
+          prev.chucVu === storedUser.chucVu &&
+          prev.donVi === storedUser.donVi &&
+          prev.soDienThoai === storedUser.soDienThoai &&
+          prev.createdAt === storedUser.createdAt
+        ) {
+          return prev;
+        }
+        return storedUser;
+      });
+    }
   }, []);
 
   useEffect(() => {
     loadData();
     const unsub = storageService.subscribeDataRefresh(loadData);
     void storageService.pullFromSupabase();
+
+    // Đồng bộ phiên đăng nhập từ Supabase Auth
+    const syncAuthSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from(SUPABASE_TABLES.USERS)
+            .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
+            .eq('id', session.user.id)
+            .maybeSingle();
+
+          if (profile) {
+            const existingUser = storageService.getCurrentUser();
+            const user = storageService.fromUserRow(profile, {
+              id: session.user.id,
+              username: session.user.email?.split('@')[0] || existingUser?.username || 'canbo',
+              email: session.user.email || existingUser?.email,
+              fullName: session.user.user_metadata?.full_name || existingUser?.fullName || 'Cán bộ Công an',
+              role: 'VIEWER',
+              chucVu: existingUser?.chucVu || 'Cán bộ Công an xã',
+              donVi: existingUser?.donVi || 'Công an xã Lai Vung',
+              soDienThoai: existingUser?.soDienThoai || '',
+              createdAt: session.user.created_at || existingUser?.createdAt || '',
+              lastLoginAt: existingUser?.lastLoginAt || new Date().toISOString(),
+            });
+            storageService.setCurrentUser(user);
+            setCurrentUser(prev => {
+              if (
+                prev &&
+                prev.id === user.id &&
+                prev.username === user.username &&
+                prev.email === user.email &&
+                prev.fullName === user.fullName &&
+                prev.role === user.role &&
+                prev.chucVu === user.chucVu &&
+                prev.donVi === user.donVi &&
+                prev.soDienThoai === user.soDienThoai &&
+                prev.createdAt === user.createdAt
+              ) {
+                return prev;
+              }
+              return user;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Không thể đồng bộ phiên Supabase Auth:', err);
+      }
+    };
+
+    void syncAuthSession();
     return unsub;
   }, [loadData]);
 
@@ -117,10 +190,11 @@ export default function App() {
   const handleLoginSuccess = (user: UserAccount) => {
     setCurrentUser(user);
     loadData();
+    void storageService.pullFromSupabase();
     showToast('Đăng nhập thành công', `Chào mừng ${user.fullName} (${user.role}) làm việc với hệ thống.`);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (currentUser) {
       storageService.addAuditLog(
         currentUser,
@@ -128,6 +202,11 @@ export default function App() {
         currentUser.username,
         'Cán bộ đăng xuất khỏi hệ thống'
       );
+    }
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn('Lỗi đăng xuất Supabase Auth:', err);
     }
     storageService.setCurrentUser(null);
     setCurrentUser(null);

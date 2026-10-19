@@ -3,7 +3,8 @@ export type UserRole = 'ADMIN' | 'MANAGER' | 'VIEWER';
 export interface UserAccount {
   id: string;
   username: string;
-  passwordHash: string; // SHA-256 hashed
+  email?: string;
+  passwordHash?: string; // DEPRECATED: Xác thực an toàn thực hiện qua Supabase Auth, không lưu mật khẩu trong bảng users
   fullName: string;
   role: UserRole;
   chucVu: string;

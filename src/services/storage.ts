@@ -12,7 +12,6 @@ import {
 } from '../types';
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
 import { OFFICIAL_MEMBERS } from '../data/officialMembers';
-import { hashPassword } from '../utils/security';
 
 
 const STORAGE_KEYS = {
@@ -27,10 +26,6 @@ const STORAGE_KEYS = {
   KHEN_THUONG: 'ca_laivung_antt_khenthuong_v1',
 };
 
-// Mật khẩu băm sẵn cho 3 tài khoản mặc định (mật khẩu mặc định: '123456')
-// Cùng thuật toán với hashPassword trong security.ts
-const DEFAULT_PW_HASH = '123456_hashed_secure';
-
 export const SYSTEM_MANAGER_INFO = {
   fullName: 'Trần Thanh Tuấn',
   rank: 'Trung tá',
@@ -40,42 +35,19 @@ export const SYSTEM_MANAGER_INFO = {
   parentAgency: 'Công an tỉnh Đồng Tháp',
   province: 'Tỉnh Đồng Tháp',
   adminUsername: 'Admin',
-  adminPassword: 'Tuan@123',
 };
 
-const INITIAL_USERS: UserAccount[] = [
-  {
-    id: 'user_admin_01',
-    username: 'Admin',
-    passwordHash: 'Tuan@123',
-    fullName: 'Trung tá Trần Thanh Tuấn',
-    role: 'ADMIN',
-    chucVu: 'Phó Trưởng Công an xã',
-    donVi: 'Công an xã Lai Vung',
-    soDienThoai: '0913344189',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'user_manager_02',
-    username: 'canbo_quanly',
-    passwordHash: DEFAULT_PW_HASH,
-    fullName: 'Đại úy Lê Hoàng Minh',
-    role: 'MANAGER',
-    chucVu: 'Cán bộ quản lý',
-    donVi: 'Công an xã Lai Vung',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-  {
-    id: 'user_viewer_03',
-    username: 'canbo_xem',
-    passwordHash: DEFAULT_PW_HASH,
-    fullName: 'Thượng úy Nguyễn Văn Hậu',
-    role: 'VIEWER',
-    chucVu: 'Cán bộ trực ban',
-    donVi: 'Công an xã Lai Vung',
-    createdAt: '2025-01-01T00:00:00.000Z',
-  },
-];
+const INITIAL_USERS: UserAccount[] = [];
+
+const SYSTEM_AUDIT_USER: UserAccount = {
+  id: 'system',
+  username: 'system',
+  fullName: 'Hệ thống Công an xã',
+  role: 'VIEWER',
+  chucVu: 'Hệ thống',
+  donVi: 'Công an xã Lai Vung',
+  createdAt: '2025-01-01T00:00:00.000Z',
+};
 
 const INITIAL_DIA_BAN: DiaBanAp[] = [
   {
@@ -1346,11 +1318,16 @@ class StorageService {
   private syncStatus: SupabaseSyncStatus = 'checking';
   private syncMessage = 'Đang kiểm tra kết nối Supabase...';
   private lastSyncAt: string | undefined = undefined;
+  private lastUsersError: string | null = null;
   private statusListeners: Array<(status: SupabaseSyncStatus, message: string, lastSyncAt?: string) => void> = [];
   private dataListeners: Array<() => void> = [];
 
   constructor() {
     this.initSystemAndEnforceAdmin();
+  }
+
+  getLastUsersError(): string | null {
+    return this.lastUsersError;
   }
 
   // --- SUPABASE LISTENERS & STATUS ---
@@ -1404,6 +1381,132 @@ class StorageService {
     }
     const base = typeof raw_data === 'object' && raw_data !== null ? raw_data : {};
     return { ...base, ...definedCols } as T;
+  }
+
+  /**
+   * Mapper riêng cho bảng public.users -> UserAccount.
+   * - Các cột chính thức (id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at)
+   *   là nguồn ưu tiên.
+   * - Đặc biệt id và role chỉ lấy từ cột chính thức (hoặc fallback xác thực khi chưa có dòng),
+   *   tuyệt đối không lấy quyền (role) hay id từ raw_data.
+   * - Ngày tạo thiếu hoặc không hợp lệ trả về '' để hiển thị "Chưa cập nhật", không tự lấy ngày hiện tại.
+   * - Loại bỏ hoàn toàn mọi trường mật khẩu / bản băm mật khẩu.
+   */
+  fromUserRow(row: any, fallback?: Partial<UserAccount>): UserAccount {
+    const source = row && typeof row === 'object' ? row : {};
+    const raw =
+      source.raw_data && typeof source.raw_data === 'object' && source.raw_data !== null
+        ? source.raw_data
+        : {};
+
+    const pickNonEmptyStr = (...candidates: any[]): string => {
+      for (const c of candidates) {
+        if (typeof c === 'string' && c.trim() !== '') {
+          return c.trim();
+        }
+      }
+      return '';
+    };
+
+    const pickValidDateStr = (...candidates: any[]): string => {
+      for (const c of candidates) {
+        if (typeof c === 'string' && c.trim() !== '') {
+          const trimmed = c.trim();
+          const parsed = new Date(trimmed);
+          if (!Number.isNaN(parsed.getTime())) {
+            return trimmed;
+          }
+        }
+      }
+      return '';
+    };
+
+    // 1. id: Nguồn ưu tiên tuyệt đối từ cột id chính thức, không lấy từ raw_data
+    const id = pickNonEmptyStr(
+      source.id != null ? String(source.id) : '',
+      fallback?.id != null ? String(fallback.id) : ''
+    );
+
+    // 2. role: Nguồn ưu tiên tuyệt đối từ cột role chính thức, KHÔNG lấy quyền từ raw_data
+    const validRoles: UserRole[] = ['ADMIN', 'MANAGER', 'VIEWER'];
+    const roleCandidate = source.role ?? fallback?.role;
+    const role: UserRole = validRoles.includes(roleCandidate) ? roleCandidate : 'VIEWER';
+
+    // 3. Các cột chính thức trong bảng public.users là nguồn ưu tiên
+    const username = pickNonEmptyStr(
+      source.username,
+      raw.username,
+      fallback?.username
+    );
+
+    const email = pickNonEmptyStr(
+      source.email,
+      raw.email,
+      fallback?.email
+    ) || undefined;
+
+    const fullName = pickNonEmptyStr(
+      source.full_name,
+      source.fullName,
+      raw.fullName,
+      raw.full_name,
+      fallback?.fullName,
+      username
+    );
+
+    const chucVu = pickNonEmptyStr(
+      source.chuc_vu,
+      source.chucVu,
+      raw.chucVu,
+      raw.chuc_vu,
+      fallback?.chucVu
+    ) || 'Cán bộ Công an xã';
+
+    const donVi = pickNonEmptyStr(
+      source.don_vi,
+      source.donVi,
+      raw.donVi,
+      raw.don_vi,
+      fallback?.donVi
+    ) || 'Công an xã Lai Vung';
+
+    const soDienThoai = pickNonEmptyStr(
+      source.so_dien_thoai,
+      source.soDienThoai,
+      raw.soDienThoai,
+      raw.so_dien_thoai,
+      fallback?.soDienThoai
+    );
+
+    // 4. Ngày tạo: không tự lấy ngày hiện tại thay ngày tạo bị thiếu
+    const createdAt = pickValidDateStr(
+      source.created_at,
+      source.createdAt,
+      raw.createdAt,
+      raw.created_at,
+      fallback?.createdAt
+    );
+
+    const lastLoginAt = pickValidDateStr(
+      source.last_login_at,
+      source.lastLoginAt,
+      raw.lastLoginAt,
+      raw.last_login_at,
+      fallback?.lastLoginAt
+    ) || undefined;
+
+    return {
+      id,
+      username,
+      ...(email ? { email } : {}),
+      fullName,
+      role,
+      chucVu,
+      donVi,
+      soDienThoai,
+      ...(lastLoginAt ? { lastLoginAt } : {}),
+      createdAt,
+    };
   }
 
   private toDiaBanRow(item: DiaBanAp) {
@@ -1543,18 +1646,40 @@ class StorageService {
     };
   }
 
-  private toUserRow(item: UserAccount) {
+  toUserRow(item: UserAccount) {
+    // Tuyệt đối không gửi mật khẩu hoặc bản băm mật khẩu vào public.users hay raw_data.
+    // Không tự lấy ngày hiện tại thay cho ngày tạo bị thiếu.
+    const clean = this.fromUserRow(item);
+    const hasValidCreatedAt =
+      typeof clean.createdAt === 'string' &&
+      clean.createdAt.trim() !== '' &&
+      !Number.isNaN(new Date(clean.createdAt.trim()).getTime());
+    const validCreatedAt = hasValidCreatedAt ? clean.createdAt.trim() : null;
+
+    const safeRawData: Record<string, any> = {
+      id: clean.id,
+      username: clean.username,
+      ...(clean.email ? { email: clean.email } : {}),
+      fullName: clean.fullName,
+      role: clean.role,
+      chucVu: clean.chucVu,
+      donVi: clean.donVi,
+      soDienThoai: clean.soDienThoai || '',
+      ...(validCreatedAt ? { createdAt: validCreatedAt } : {}),
+      ...(clean.lastLoginAt ? { lastLoginAt: clean.lastLoginAt } : {}),
+    };
+
     return {
-      id: item.id,
-      username: item.username,
-      password_hash: item.passwordHash || null,
-      full_name: item.fullName,
-      role: item.role,
-      chuc_vu: item.chucVu,
-      don_vi: item.donVi,
-      so_dien_thoai: item.soDienThoai || null,
-      created_at: item.createdAt || new Date().toISOString(),
-      raw_data: item,
+      id: clean.id,
+      username: clean.username,
+      full_name: clean.fullName,
+      role: clean.role,
+      chuc_vu: clean.chucVu,
+      don_vi: clean.donVi,
+      so_dien_thoai: clean.soDienThoai || null,
+      created_at: validCreatedAt,
+      updated_at: new Date().toISOString(),
+      raw_data: safeRawData,
     };
   }
 
@@ -1931,7 +2056,7 @@ class StorageService {
         { data: ttData },
         { data: thData },
         { data: ktData },
-        { data: usrData },
+        { data: usrData, error: usrErr },
         { data: logData },
       ] = await Promise.all([
         supabase.from(SUPABASE_TABLES.DIA_BAN).select('*'),
@@ -1939,7 +2064,7 @@ class StorageService {
         supabase.from(SUPABASE_TABLES.TUAN_TRA).select('*'),
         supabase.from(SUPABASE_TABLES.TAP_HUAN).select('*'),
         supabase.from(SUPABASE_TABLES.KHEN_THUONG).select('*'),
-        supabase.from(SUPABASE_TABLES.USERS).select('*'),
+        supabase.from(SUPABASE_TABLES.USERS).select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data'),
         supabase.from(SUPABASE_TABLES.AUDIT_LOGS).select('*').order('thoi_gian', { ascending: false }).limit(500),
       ]);
 
@@ -2009,15 +2134,43 @@ class StorageService {
         const list = ktData.map(r => this.fromDbRow<HoSoKhenThuong>(r));
         localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(list));
       }
-      if (usrData && usrData.length > 0) {
-        const list = usrData.map(r => this.fromDbRow<UserAccount>(r));
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+
+      // 3. Ánh xạ danh sách tài khoản bằng fromUserRow().
+      // Khi tải danh sách users lỗi hoặc rỗng, TUYỆT ĐỐI KHÔNG tự đẩy danh sách tài khoản cũ từ localStorage lên Supabase.
+      if (usrErr) {
+        this.lastUsersError = usrErr.message;
+        console.warn('Lỗi tải bảng public.users từ Supabase:', usrErr.message);
       } else {
-        void this.bgUpsert(SUPABASE_TABLES.USERS, this.getUsers().map(x => this.toUserRow(x)));
+        this.lastUsersError = null;
+        const list = (usrData || []).map(r => this.fromUserRow(r));
+        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+
+        const activeUser = this.getCurrentUser();
+        if (activeUser) {
+          const matchedSelf = list.find(u => u.id === activeUser.id);
+          if (matchedSelf) {
+            this.setCurrentUser({
+              ...matchedSelf,
+              email: matchedSelf.email || activeUser.email,
+              lastLoginAt: activeUser.lastLoginAt || matchedSelf.lastLoginAt,
+            });
+          }
+        }
       }
+
       if (logData && logData.length > 0) {
         const list = logData.map(r => this.fromDbRow<AuditLog>(r));
         localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(list));
+      }
+
+      if (usrErr) {
+        const errMsg = `Lỗi truy vấn bảng users trên Supabase: ${usrErr.message}`;
+        this.notifyStatus('error', errMsg);
+        this.notifyDataRefresh();
+        return {
+          success: false,
+          message: errMsg,
+        };
       }
 
       this.notifyStatus('connected_ready', 'Đã đồng bộ dữ liệu mới nhất từ Supabase');
@@ -2048,7 +2201,6 @@ class StorageService {
       const tuanTra = this.getNhatKyTuanTraList().map(x => this.toTuanTraRow(x));
       const tapHuan = this.getDotTapHuanList().map(x => this.toTapHuanRow(x));
       const khenThuong = this.getHoSoKhenThuongList().map(x => this.toKhenThuongRow(x));
-      const users = this.getUsers().map(x => this.toUserRow(x));
       const logs = this.getAuditLogs().slice(0, 200).map(x => this.toAuditLogRow(x));
 
       const results = await Promise.all([
@@ -2058,7 +2210,6 @@ class StorageService {
         tuanTra.length > 0 ? supabase.from(SUPABASE_TABLES.TUAN_TRA).upsert(tuanTra, { onConflict: 'id' }) : Promise.resolve({ error: null }),
         tapHuan.length > 0 ? supabase.from(SUPABASE_TABLES.TAP_HUAN).upsert(tapHuan, { onConflict: 'id' }) : Promise.resolve({ error: null }),
         khenThuong.length > 0 ? supabase.from(SUPABASE_TABLES.KHEN_THUONG).upsert(khenThuong, { onConflict: 'id' }) : Promise.resolve({ error: null }),
-        users.length > 0 ? supabase.from(SUPABASE_TABLES.USERS).upsert(users, { onConflict: 'id' }) : Promise.resolve({ error: null }),
         logs.length > 0 ? supabase.from(SUPABASE_TABLES.AUDIT_LOGS).upsert(logs, { onConflict: 'id' }) : Promise.resolve({ error: null }),
       ]);
 
@@ -2110,26 +2261,18 @@ class StorageService {
     if (typeof window === 'undefined' || !window.localStorage) return;
     const CLEAR_FLAG = 'ca_laivung_cleared_by_tuan_v1';
     if (localStorage.getItem(CLEAR_FLAG) !== 'done') {
-      // 1. Xóa sạch toàn bộ dữ liệu nhân sự hiện có
+      // 1. Xóa sạch toàn bộ dữ liệu nhân sự mẫu
       localStorage.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify([]));
 
-      // 2. Thiết lập lại danh sách tài khoản chuẩn, đảm bảo Admin là Trung tá Trần Thanh Tuấn
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
+      // 2. Không tự ý gán mật khẩu hay tạo tài khoản admin giả trong localStorage
 
-      // 3. Đăng nhập phiên làm việc mặc định cho Trung tá Trần Thanh Tuấn
-      const adminUser: UserAccount = {
-        ...INITIAL_USERS[0],
-        lastLoginAt: new Date().toISOString(),
-      };
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(adminUser));
-
-      // 4. Khởi tạo nhật ký hệ thống ghi nhận việc bàn giao và làm sạch dữ liệu
+      // 3. Khởi tạo nhật ký hệ thống
       const now = new Date().toISOString();
       const initialLog: AuditLog = {
         id: 'log_init_' + Date.now(),
-        user_id: adminUser.id,
-        user_name: adminUser.fullName,
-        userName: adminUser.fullName,
+        user_id: SYSTEM_AUDIT_USER.id,
+        user_name: SYSTEM_AUDIT_USER.fullName,
+        userName: SYSTEM_AUDIT_USER.fullName,
         user_role: 'ADMIN',
         userRole: 'ADMIN',
         thoi_gian: now,
@@ -2138,12 +2281,22 @@ class StorageService {
         action: 'CHINH_SUA',
         doi_tuong: 'Cơ sở dữ liệu nhân sự ANTT cơ sở',
         target: 'Cơ sở dữ liệu nhân sự ANTT cơ sở',
-        noi_dung_thay_doi: 'Đồng chí Trung tá Trần Thanh Tuấn - Phó Trưởng Công an xã (SĐT: 0913344189) tiếp nhận quyền quản trị hệ thống và xóa toàn bộ dữ liệu mẫu hiện có để sẵn sàng nạp dữ liệu chính thức.',
-        details: 'Đồng chí Trung tá Trần Thanh Tuấn - Phó Trưởng Công an xã (SĐT: 0913344189) tiếp nhận quyền quản trị hệ thống và xóa toàn bộ dữ liệu mẫu hiện có để sẵn sàng nạp dữ liệu chính thức.',
+        noi_dung_thay_doi: 'Khởi tạo hệ thống quản lý ANTT cơ sở xã Lai Vung. Xác thực tài khoản trực tiếp qua Supabase Auth.',
+        details: 'Khởi tạo hệ thống quản lý ANTT cơ sở xã Lai Vung. Xác thực tài khoản trực tiếp qua Supabase Auth.',
       };
       localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify([initialLog]));
 
       localStorage.setItem(CLEAR_FLAG, 'done');
+    }
+
+    // Đảm bảo xóa phiên đăng nhập cũ để màn hình Đăng nhập & Đăng ký luôn hiện ra đầu tiên khi mở web
+    const ENFORCE_AUTH_FIRST_FLAG = 'ca_laivung_auth_first_screen_v1';
+    if (localStorage.getItem(ENFORCE_AUTH_FIRST_FLAG) !== 'done') {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      }
+      localStorage.setItem(ENFORCE_AUTH_FIRST_FLAG, 'done');
     }
 
     // Tự động cập nhật đồng bộ 19 ấp chuẩn của xã Lai Vung
@@ -2181,84 +2334,125 @@ class StorageService {
   }
 
   // --- USERS & AUTH ---
-  getUsers(): UserAccount[] {
+  // Yêu cầu 4: Tài khoản thường chỉ được xem hồ sơ của mình; ADMIN được quản lý danh sách.
+  getUsers(caller?: UserAccount): UserAccount[] {
     const raw = localStorage.getItem(STORAGE_KEYS.USERS);
-    let users = INITIAL_USERS;
+    let users: any[] = [];
     if (raw) {
       try {
-        users = JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        users = Array.isArray(parsed) ? parsed : [];
       } catch {
-        users = INITIAL_USERS;
+        users = [];
       }
     }
-    // Luôn đảm bảo tài khoản Admin là đồng chí Trung tá Trần Thanh Tuấn
-    const adminIdx = users.findIndex(u => u.role === 'ADMIN' || u.username.toLowerCase() === 'admin');
-    const adminAccount: UserAccount = {
-      id: adminIdx >= 0 ? users[adminIdx].id : 'user_admin_01',
-      username: 'Admin',
-      passwordHash: 'Tuan@123',
-      fullName: 'Trung tá Trần Thanh Tuấn',
-      role: 'ADMIN',
-      chucVu: 'Phó Trưởng Công an xã',
-      donVi: 'Công an xã Lai Vung',
-      soDienThoai: '0913344189',
-      createdAt: adminIdx >= 0 ? users[adminIdx].createdAt : '2025-01-01T00:00:00.000Z',
-    };
+    // Ánh xạ chuẩn qua fromUserRow (đảm bảo tên trường camelCase và loại bỏ mọi trường mật khẩu)
+    const cleanUsers = users.map(u => this.fromUserRow(u));
 
-    if (adminIdx >= 0) {
-      users[adminIdx] = { ...users[adminIdx], ...adminAccount };
-    } else {
-      users.unshift(adminAccount);
+    const activeUser = caller !== undefined ? caller : this.getCurrentUser();
+    // Nếu không phải ADMIN, chỉ được xem hồ sơ của chính mình
+    if (activeUser && activeUser.role !== 'ADMIN') {
+      return cleanUsers.filter(
+        u => u.id === activeUser.id || (activeUser.username && u.username.toLowerCase() === activeUser.username.toLowerCase())
+      );
     }
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-    return users;
+
+    return cleanUsers;
   }
 
   setUsers(users: UserAccount[]): void {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
-    void this.bgUpsert(SUPABASE_TABLES.USERS, users.map(u => this.toUserRow(u)));
+    // Chuẩn hóa và loại bỏ toàn bộ thông tin mật khẩu trước khi lưu trữ cục bộ
+    const safeUsers = users.map(u => this.fromUserRow(u));
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(safeUsers));
+  }
+
+  async fetchUsersFromSupabase(caller?: UserAccount): Promise<{
+    success: boolean;
+    users: UserAccount[];
+    error?: string;
+  }> {
+    try {
+      const { data, error } = await supabase
+        .from(SUPABASE_TABLES.USERS)
+        .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        // Khi tải danh sách users lỗi, không tự đẩy danh sách tài khoản cũ từ localStorage lên Supabase
+        this.lastUsersError = error.message;
+        return {
+          success: false,
+          users: this.getUsers(caller),
+          error: error.message,
+        };
+      }
+
+      this.lastUsersError = null;
+      const mappedUsers = (data || []).map(r => this.fromUserRow(r));
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mappedUsers));
+
+      const activeUser = caller || this.getCurrentUser();
+      if (activeUser) {
+        const matchedSelf = mappedUsers.find(u => u.id === activeUser.id);
+        if (matchedSelf) {
+          this.setCurrentUser({
+            ...matchedSelf,
+            email: matchedSelf.email || activeUser.email,
+            lastLoginAt: activeUser.lastLoginAt || matchedSelf.lastLoginAt,
+          });
+        }
+      }
+
+      this.notifyDataRefresh();
+      return {
+        success: true,
+        users: this.getUsers(caller),
+      };
+    } catch (err: any) {
+      const errMsg = err?.message || 'Lỗi mạng khi truy vấn danh sách tài khoản từ Supabase.';
+      this.lastUsersError = errMsg;
+      return {
+        success: false,
+        users: this.getUsers(caller),
+        error: errMsg,
+      };
+    }
   }
 
   getCurrentUser(): UserAccount | null {
-    const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+    if (typeof window === 'undefined') return null;
+    const raw = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     if (!raw) return null;
     try {
-      const user: UserAccount = JSON.parse(raw);
-      if (user && (user.role === 'ADMIN' || user.username.toLowerCase() === 'admin')) {
-        return {
-          ...user,
-          username: 'Admin',
-          passwordHash: 'Tuan@123',
-          fullName: 'Trung tá Trần Thanh Tuấn',
-          role: 'ADMIN',
-          chucVu: 'Phó Trưởng Công an xã',
-          donVi: 'Công an xã Lai Vung',
-          soDienThoai: '0913344189',
-        };
-      }
-      return user;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return this.fromUserRow(parsed);
     } catch {
       return null;
     }
   }
 
   setCurrentUser(user: UserAccount | null): void {
+    if (typeof window === 'undefined') return;
     if (user) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+      const safeUser = this.fromUserRow(user);
+      sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
     } else {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
     }
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   }
 
   async registerUser(params: {
     username: string;
+    email?: string;
     password: string;
     fullName: string;
     role?: UserRole;
     chucVu?: string;
     donVi?: string;
     soDienThoai?: string;
-  }): Promise<{ success: boolean; error?: string; user?: UserAccount }> {
+  }): Promise<{ success: boolean; error?: string; user?: UserAccount; requireEmailConfirmation?: boolean }> {
     const rawUsername = (params.username || '').trim();
     if (!rawUsername) {
       return { success: false, error: 'Vui lòng nhập tên đăng nhập.' };
@@ -2270,76 +2464,264 @@ class StorageService {
       return { success: false, error: 'Tên đăng nhập không được chứa khoảng trắng (viết liền không dấu).' };
     }
     if (!params.password || params.password.length < 6) {
-      return { success: false, error: 'Mật khẩu phải có tối thiểu 6 ký tự.' };
+      return { success: false, error: 'Mật khẩu phải có tối thiểu 6 ký tự để bảo đảm an toàn.' };
     }
     if (!params.fullName || !params.fullName.trim()) {
       return { success: false, error: 'Vui lòng nhập họ và tên cán bộ.' };
     }
 
+    // YÊU CẦU 1: Người đăng ký mới LUÔN LUÔN là VIEWER. Không lấy quyền từ raw_user_meta_data và không cho tài khoản đầu tiên tự nhận ADMIN.
+    const safeRole: UserRole = 'VIEWER';
     const cleanUsername = rawUsername.toLowerCase();
-    const currentUsers = this.getUsers();
+    const cleanFullName = params.fullName.trim();
+    const cleanChucVu = params.chucVu?.trim() || 'Cán bộ cơ sở';
+    const cleanDonVi = params.donVi?.trim() || 'Công an xã Lai Vung';
+    const cleanPhone = params.soDienThoai?.trim() || '';
 
-    const exists = currentUsers.some(u => u.username.toLowerCase() === cleanUsername);
-    if (exists) {
+    // Chuẩn hóa email xác thực qua Supabase Auth
+    let email = params.email?.trim() || '';
+    if (!email) {
+      email = `${cleanUsername}@laivung.antt.local`;
+    }
+
+    try {
+      // 1. Tạo tài khoản người dùng qua Supabase Auth (Mật khẩu được mã hóa an toàn trên máy chủ Supabase Auth)
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password: params.password,
+        options: {
+          data: {
+            username: cleanUsername,
+            full_name: cleanFullName,
+            role: 'VIEWER', // Luôn luôn cố định là VIEWER
+            chuc_vu: cleanChucVu,
+            don_vi: cleanDonVi,
+            so_dien_thoai: cleanPhone,
+          },
+        },
+      });
+
+      if (authError) {
+        return {
+          success: false,
+          error: authError.message || 'Không thể đăng ký tài khoản với Supabase Auth.',
+        };
+      }
+
+      if (!authData.user) {
+        return {
+          success: false,
+          error: 'Không nhận được phản hồi tài khoản từ máy chủ Supabase Auth.',
+        };
+      }
+
+      const userId = authData.user.id;
+      const authCreatedAt = authData.user.created_at || '';
+
+      const draftUser: UserAccount = this.fromUserRow(
+        {
+          id: userId,
+          username: cleanUsername,
+          full_name: cleanFullName,
+          role: safeRole,
+          chuc_vu: cleanChucVu,
+          don_vi: cleanDonVi,
+          so_dien_thoai: cleanPhone,
+          created_at: authCreatedAt,
+        },
+        { email }
+      );
+
+      // 2. Lưu hồ sơ cán bộ vào bảng public.users (Tuyệt đối không gửi mật khẩu hay bản băm)
+      const userRow = this.toUserRow(draftUser);
+      const { data: savedRow, error: dbErr } = await supabase
+        .from(SUPABASE_TABLES.USERS)
+        .upsert(userRow, { onConflict: 'id' })
+        .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
+        .maybeSingle();
+
+      if (dbErr) {
+        console.warn('Lưu hồ sơ vào public.users báo lỗi (trigger auth có thể đã tự tạo):', dbErr.message);
+      }
+
+      const newUser = this.fromUserRow(savedRow || userRow, draftUser);
+
+      // 3. Cập nhật danh sách tài khoản cục bộ
+      const rawUsers = localStorage.getItem(STORAGE_KEYS.USERS);
+      let allUsers: UserAccount[] = [];
+      if (rawUsers) {
+        try {
+          const parsed = JSON.parse(rawUsers);
+          allUsers = Array.isArray(parsed) ? parsed.map(u => this.fromUserRow(u)) : [];
+        } catch {
+          allUsers = [];
+        }
+      }
+      const updatedUsers = [
+        ...allUsers.filter(u => u.id !== newUser.id && u.username.toLowerCase() !== cleanUsername),
+        newUser,
+      ];
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+
+      // 4. Ghi nhật ký hệ thống (KHÔNG bao giờ chứa mật khẩu)
+      this.addAuditLog(
+        newUser,
+        'THEM_MOI',
+        `Tài khoản: ${newUser.username} (${newUser.fullName})`,
+        `Đăng ký tài khoản cán bộ thành công qua Supabase Auth với vai trò ${newUser.role} - Đơn vị: ${newUser.donVi}`
+      );
+
+      const requireEmailConfirmation = !authData.session && Boolean(authData.user);
+
+      return {
+        success: true,
+        user: newUser,
+        requireEmailConfirmation,
+      };
+    } catch (err: any) {
       return {
         success: false,
-        error: `Tên đăng nhập "${rawUsername}" đã được sử dụng. Vui lòng chọn tên đăng nhập khác!`,
+        error: err?.message || 'Có lỗi xảy ra khi tạo tài khoản xác thực Supabase Auth.',
+      };
+    }
+  }
+
+  // Yêu cầu 2: Chỉ quản trị viên được thay đổi role của người khác. Người dùng thường không được đổi role hoặc id của mình.
+  async updateUserRole(
+    targetUserId: string,
+    newRole: UserRole,
+    caller?: UserAccount
+  ): Promise<{ success: boolean; error?: string }> {
+    const activeUser = caller || this.getCurrentUser();
+    if (!activeUser || activeUser.role !== 'ADMIN') {
+      return {
+        success: false,
+        error: 'Chỉ Quản trị viên (ADMIN) mới có quyền thay đổi vai trò (role) của tài khoản khác.',
       };
     }
 
-    // Băm mật khẩu bằng hàm bảo mật chuẩn SHA-256
-    const hashed = await hashPassword(params.password);
-    const now = new Date().toISOString();
-    const newUser: UserAccount = {
-      id: 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      username: rawUsername,
-      passwordHash: hashed,
-      fullName: params.fullName.trim(),
-      role: params.role || 'VIEWER',
-      chucVu: params.chucVu?.trim() || 'Cán bộ cơ sở',
-      donVi: params.donVi?.trim() || 'Công an xã Lai Vung',
-      soDienThoai: params.soDienThoai?.trim() || '',
-      createdAt: now,
-    };
+    try {
+      const now = new Date().toISOString();
+      const { data: updatedRow, error } = await supabase
+        .from(SUPABASE_TABLES.USERS)
+        .update({ role: newRole, updated_at: now })
+        .eq('id', targetUserId)
+        .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
+        .maybeSingle();
 
-    const updatedUsers = [...currentUsers, newUser];
-    this.setUsers(updatedUsers);
+      if (error) {
+        return { success: false, error: error.message };
+      }
 
-    this.addAuditLog(
-      newUser,
-      'THEM_MOI',
-      `Tài khoản: ${newUser.username} (${newUser.fullName})`,
-      `Đăng ký tài khoản cán bộ mới thành công với vai trò ${newUser.role} - Đơn vị: ${newUser.donVi}`
-    );
+      const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+      let allUsers: UserAccount[] = [];
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          allUsers = Array.isArray(parsed) ? parsed.map(u => this.fromUserRow(u)) : [];
+        } catch {
+          allUsers = [];
+        }
+      }
+      const updated = allUsers.map(u => {
+        if (u.id === targetUserId) {
+          return updatedRow ? this.fromUserRow(updatedRow, u) : { ...u, role: newRole };
+        }
+        return u;
+      });
+      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
 
-    return { success: true, user: newUser };
+      this.addAuditLog(
+        activeUser,
+        'CHINH_SUA',
+        `Phân quyền tài khoản ID: ${targetUserId}`,
+        `Quản trị viên đã thay đổi vai trò người dùng thành ${newRole}`
+      );
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Lỗi khi cập nhật vai trò người dùng' };
+    }
   }
 
-  deleteUser(id: string): { success: boolean; error?: string } {
-    const currentUsers = this.getUsers();
-    const target = currentUsers.find(u => u.id === id);
-    if (!target) return { success: false, error: 'Không tìm thấy tài khoản.' };
-    if (target.role === 'ADMIN' || target.username.toLowerCase() === 'admin') {
-      return { success: false, error: 'Không thể xóa tài khoản Quản trị viên tối cao (Admin).' };
+  deleteUser(id: string, caller?: UserAccount): { success: boolean; error?: string } {
+    const activeUser = caller || this.getCurrentUser();
+    if (activeUser && activeUser.role !== 'ADMIN') {
+      return { success: false, error: 'Chỉ Quản trị viên (ADMIN) mới có quyền xóa tài khoản.' };
     }
-    const filtered = currentUsers.filter(u => u.id !== id);
-    this.setUsers(filtered);
+    if (activeUser && activeUser.id === id) {
+      return { success: false, error: 'Quản trị viên không thể tự xóa tài khoản của chính mình.' };
+    }
+
+    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    let allUsers: UserAccount[] = [];
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        allUsers = Array.isArray(parsed) ? parsed.map(u => this.fromUserRow(u)) : [];
+      } catch {
+        allUsers = [];
+      }
+    }
+
+    const target = allUsers.find(u => u.id === id);
+    if (!target) return { success: false, error: 'Không tìm thấy tài khoản.' };
+
+    const filtered = allUsers.filter(u => u.id !== id);
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
     void this.bgDelete(SUPABASE_TABLES.USERS, id);
+
+    this.addAuditLog(
+      activeUser,
+      'XOA_VINH_VIEN',
+      `Tài khoản: ${target.username} (${target.fullName})`,
+      'Quản trị viên xóa tài khoản cán bộ khỏi hệ thống'
+    );
     return { success: true };
   }
 
-  updateUser(user: UserAccount): { success: boolean; error?: string } {
-    const currentUsers = this.getUsers();
-    const idx = currentUsers.findIndex(u => u.id === user.id);
+  updateUser(user: UserAccount, caller?: UserAccount): { success: boolean; error?: string } {
+    const activeUser = caller || this.getCurrentUser();
+    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    let allUsers: UserAccount[] = [];
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        allUsers = Array.isArray(parsed) ? parsed.map(u => this.fromUserRow(u)) : [];
+      } catch {
+        allUsers = [];
+      }
+    }
+    const idx = allUsers.findIndex(u => u.id === user.id);
     if (idx === -1) return { success: false, error: 'Không tìm thấy tài khoản.' };
-    currentUsers[idx] = user;
-    this.setUsers(currentUsers);
+
+    const oldUser = allUsers[idx];
+    // Yêu cầu 2: Người dùng thường không được đổi role hoặc id của mình
+    if (activeUser?.role !== 'ADMIN') {
+      if (user.id !== oldUser.id) {
+        return { success: false, error: 'Không thể thay đổi ID tài khoản.' };
+      }
+      if (user.role !== oldUser.role) {
+        return { success: false, error: 'Chỉ Quản trị viên (ADMIN) mới có quyền thay đổi vai trò (role).' };
+      }
+    }
+
+    const safeUser = this.fromUserRow(user, oldUser);
+    allUsers[idx] = safeUser;
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(allUsers));
+    void this.bgUpsert(SUPABASE_TABLES.USERS, this.toUserRow(safeUser));
     return { success: true };
   }
 
   async syncUsersToSupabase(): Promise<{ success: boolean; message: string; count?: number }> {
     try {
       const users = this.getUsers().map(u => this.toUserRow(u));
+      if (users.length === 0) {
+        return {
+          success: false,
+          message: 'Danh sách tài khoản hiện đang rỗng, không có tài khoản nào để đẩy lên Supabase.',
+        };
+      }
       const { error } = await supabase.from(SUPABASE_TABLES.USERS).upsert(users, { onConflict: 'id' });
       if (error) {
         return { success: false, message: `Lỗi Supabase: ${error.message}` };
@@ -2833,7 +3215,7 @@ class StorageService {
 
   saveNhatKyTuanTra(item: NhatKyTuanTra, user?: UserAccount): NhatKyTuanTra {
     const list = this.getNhatKyTuanTraList();
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const isEdit = list.some(x => x.id === item.id);
     let updated: NhatKyTuanTra[];
 
@@ -2872,7 +3254,7 @@ class StorageService {
     const item = list.find(x => x.id === id);
     if (!item) return;
 
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.TUAN_TRA, id);
@@ -2898,7 +3280,7 @@ class StorageService {
 
   saveDotTapHuan(item: DotTapHuan, user?: UserAccount): DotTapHuan {
     const list = this.getDotTapHuanList();
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const isEdit = list.some(x => x.id === item.id);
     let updated: DotTapHuan[];
 
@@ -2936,7 +3318,7 @@ class StorageService {
     const item = list.find(x => x.id === id);
     if (!item) return;
 
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.TAP_HUAN, id);
@@ -2962,7 +3344,7 @@ class StorageService {
 
   saveHoSoKhenThuong(item: HoSoKhenThuong, user?: UserAccount): HoSoKhenThuong {
     const list = this.getHoSoKhenThuongList();
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const isEdit = list.some(x => x.id === item.id);
     let updated: HoSoKhenThuong[];
 
@@ -3003,7 +3385,7 @@ class StorageService {
     const item = list.find(x => x.id === id);
     if (!item) return;
 
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
     localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.KHEN_THUONG, id);
@@ -3091,7 +3473,7 @@ class StorageService {
       softDeletedTombstones: {},
       clearAllPending: false,
     });
-    this.setUsers(INITIAL_USERS);
+    // Không ghi đè tài khoản người dùng khi khôi phục danh mục mẫu
     this.setDiaBanList(INITIAL_DIA_BAN);
     this.setToANTTList(INITIAL_TO_ANTT);
     this.setNhanSuList(DEMO_SAMPLE_MEMBERS);
@@ -3123,12 +3505,12 @@ class StorageService {
         console.warn('Lỗi xóa sạch bảng nhan_su trên Supabase:', e);
       }
     });
-    const currentUser = user || this.getCurrentUser() || INITIAL_USERS[0];
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     this.addAuditLog(
       currentUser,
       'XOA_VINH_VIEN',
       'Toàn bộ danh sách hồ sơ nhân sự',
-      'Đồng chí Trung tá Trần Thanh Tuấn - Phó Trưởng Công an xã đã thực hiện xóa sạch toàn bộ dữ liệu nhân sự trong hệ thống'
+      'Đồng chí phụ trách hệ thống đã thực hiện xóa sạch toàn bộ dữ liệu nhân sự kiểm thử trong hệ thống'
     );
   }
 }
