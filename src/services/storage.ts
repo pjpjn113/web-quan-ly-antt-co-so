@@ -13,6 +13,25 @@ import {
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
 import { OFFICIAL_MEMBERS } from '../data/officialMembers';
 
+// Nhật ký chỉ được thêm qua RPC; danh tính và thời gian do máy chủ xác định.
+async function appendOwnAuditLogs(logs: AuditLog[]): Promise<void> {
+  const { data, error } = await supabase.auth.getUser();
+  if (error || !data.user) throw new Error('Cần đăng nhập để ghi nhật ký.');
+  for (const log of logs) {
+    if (log.user_id !== data.user.id) continue;
+    const { error: writeError } = await supabase.rpc('append_audit_event', {
+      p_event: {
+        id: log.id,
+        hanh_dong: log.hanh_dong,
+        doi_tuong: log.doi_tuong,
+        noi_dung_thay_doi: log.noi_dung_thay_doi,
+      },
+    });
+    if (writeError) throw new Error(writeError.message);
+  }
+}
+
+
 
 const STORAGE_KEYS = {
   NHAN_SU: 'ca_laivung_antt_nhansu_v1',
@@ -2201,7 +2220,6 @@ class StorageService {
       const tuanTra = this.getNhatKyTuanTraList().map(x => this.toTuanTraRow(x));
       const tapHuan = this.getDotTapHuanList().map(x => this.toTapHuanRow(x));
       const khenThuong = this.getHoSoKhenThuongList().map(x => this.toKhenThuongRow(x));
-      const logs = this.getAuditLogs().slice(0, 200).map(x => this.toAuditLogRow(x));
 
       const results = await Promise.all([
         diaBan.length > 0 ? supabase.from(SUPABASE_TABLES.DIA_BAN).upsert(diaBan, { onConflict: 'id' }) : Promise.resolve({ error: null }),
@@ -2210,7 +2228,6 @@ class StorageService {
         tuanTra.length > 0 ? supabase.from(SUPABASE_TABLES.TUAN_TRA).upsert(tuanTra, { onConflict: 'id' }) : Promise.resolve({ error: null }),
         tapHuan.length > 0 ? supabase.from(SUPABASE_TABLES.TAP_HUAN).upsert(tapHuan, { onConflict: 'id' }) : Promise.resolve({ error: null }),
         khenThuong.length > 0 ? supabase.from(SUPABASE_TABLES.KHEN_THUONG).upsert(khenThuong, { onConflict: 'id' }) : Promise.resolve({ error: null }),
-        logs.length > 0 ? supabase.from(SUPABASE_TABLES.AUDIT_LOGS).upsert(logs, { onConflict: 'id' }) : Promise.resolve({ error: null }),
       ]);
 
       const firstErr = results.find(r => r.error)?.error;
@@ -3113,7 +3130,7 @@ class StorageService {
     action: AuditLog['hanh_dong'],
     target: string,
     details: string
-  ): void {
+  ): Promise<void> {
     const logs = this.getAuditLogs();
     const now = new Date().toISOString();
     const newLog: AuditLog = {
@@ -3138,7 +3155,15 @@ class StorageService {
       logs.length = 500;
     }
     localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
-    void this.bgUpsert(SUPABASE_TABLES.AUDIT_LOGS, this.toAuditLogRow(newLog));
+    if (!user) return Promise.resolve();
+    return this.enqueueSync(async () => {
+      try {
+        await appendOwnAuditLogs([newLog]);
+      } catch (error: any) {
+        this.notifyStatus('error', error?.message || 'Không ghi được nhật ký lên Supabase');
+        throw error;
+      }
+    });
   }
 
   // --- CONVENIENCE ALIASES FOR COMPONENT INTERACTION ---
