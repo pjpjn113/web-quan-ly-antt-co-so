@@ -180,25 +180,25 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 -- Chính sách truy cập dữ liệu nghiệp vụ cho cán bộ hệ thống
 DROP POLICY IF EXISTS "Allow all access dia_ban_ap" ON public.dia_ban_ap;
-CREATE POLICY "Allow all access dia_ban_ap" ON public.dia_ban_ap FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access to_antt" ON public.to_antt;
-CREATE POLICY "Allow all access to_antt" ON public.to_antt FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access nhan_su" ON public.nhan_su;
-CREATE POLICY "Allow all access nhan_su" ON public.nhan_su FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access nhat_ky_tuan_tra" ON public.nhat_ky_tuan_tra;
-CREATE POLICY "Allow all access nhat_ky_tuan_tra" ON public.nhat_ky_tuan_tra FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access dot_tap_huan" ON public.dot_tap_huan;
-CREATE POLICY "Allow all access dot_tap_huan" ON public.dot_tap_huan FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access ho_so_khen_thuong" ON public.ho_so_khen_thuong;
-CREATE POLICY "Allow all access ho_so_khen_thuong" ON public.ho_so_khen_thuong FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 DROP POLICY IF EXISTS "Allow all access audit_logs" ON public.audit_logs;
-CREATE POLICY "Allow all access audit_logs" ON public.audit_logs FOR ALL USING (true) WITH CHECK (true);
+-- Không tạo chính sách mở toàn quyền. Dùng RLS đã cấu hình trên máy chủ.
 
 COMMIT;
 

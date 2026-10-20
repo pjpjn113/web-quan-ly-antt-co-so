@@ -976,31 +976,6 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
           </div>
         </div>
 
-        {/* Box 3: Reset Demo */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold mb-4">
-              <RotateCcw className="w-6 h-6" />
-            </div>
-            <h3 className="text-sm font-bold text-slate-900 uppercase">
-              Khôi Phục Dữ Liệu DEMO
-            </h3>
-            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-              Tái tạo lại danh sách thành viên mẫu đầy đủ các ấp và tổ ANTT xã Lai Vung phục vụ trình diễn và tập huấn nghiệp vụ.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            id="btn-reset-demo"
-            onClick={handleResetToDemo}
-            className="mt-6 w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition flex items-center justify-center gap-2"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>NẠP LẠI DỮ LIỆU DEMO</span>
-          </button>
-        </div>
-
         {/* Box 4: Xóa hết dữ liệu */}
         <div className="bg-white p-6 rounded-2xl border border-rose-200 bg-rose-50/20 shadow-xs flex flex-col justify-between">
           <div>

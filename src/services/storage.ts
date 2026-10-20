@@ -11,7 +11,7 @@ import {
   DismissMemberData
 } from '../types';
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
-import { OFFICIAL_MEMBERS } from '../data/officialMembers';
+import { sessionDataCache, removeLegacyBusinessData } from './sessionDataCache';
 
 // Nhật ký chỉ được thêm qua RPC; danh tính và thời gian do máy chủ xác định.
 async function appendOwnAuditLogs(logs: AuditLog[]): Promise<void> {
@@ -481,834 +481,11 @@ const INITIAL_TO_ANTT: ToANTT[] = [
 ];
 
 // Dữ liệu chuẩn chính thức lực lượng ANTT cơ sở xã Lai Vung (27 đồng chí chính thức theo biểu mẫu)
-const INITIAL_NHAN_SU: NhanSu[] = OFFICIAL_MEMBERS;
-export const DEMO_SAMPLE_MEMBERS: NhanSu[] = OFFICIAL_MEMBERS;
-
-const OLD_DEMO_SAMPLE_MEMBERS: NhanSu[] = [
-  {
-    id: 'ns_001',
-    ma_nhan_su: 'ANTT-LV-001',
-    stt: 1,
-    ho_ten: 'Nguyễn Văn Hùng',
-    ngay_sinh: '1975-04-15',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Xã Lai Vung, Tỉnh Đồng Tháp',
-    noi_o_hien_nay: 'Tổ 2, Ấp An Bình, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Số 145 Đường Hùng Vương nối dài',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Tổ trưởng',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Trung cấp',
-    chuyen_nganh: 'Quân sự cơ sở',
-    so_cccd: '087075001234',
-    ngay_cap_cccd: '2021-08-10',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2005-02-03',
-    ngay_chinh_thuc: '2006-02-03',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND ngày 28/06/2024',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank - Chi nhánh Lai Vung',
-    so_tai_khoan: '6508205128392',
-    vneid_muc_2: true,
-    so_dien_thoai: '0918234567',
-    ghi_chu: 'Cựu chiến binh, uy tín cao trong cộng đồng',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_002',
-    ma_nhan_su: 'ANTT-LV-002',
-    stt: 2,
-    ho_ten: 'Trần Thanh Phong',
-    ngay_sinh: '1982-11-20',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Xã Lai Vung, Tỉnh Đồng Tháp',
-    noi_o_hien_nay: 'Tổ 5, Ấp An Bình, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Gần cầu Ba Răng, Ấp An Bình',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Tổ phó',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Sơ cấp',
-    chuyen_nganh: 'Bảo vệ dân phố',
-    so_cccd: '087082004567',
-    ngay_cap_cccd: '2022-03-15',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2015-09-02',
-    ngay_chinh_thuc: '2016-09-02',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND ngày 28/06/2024',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'VietinBank - PGD Lai Vung',
-    so_tai_khoan: '108820492812',
-    vneid_muc_2: true,
-    so_dien_thoai: '0979456789',
-    ghi_chu: 'Nhiệt tình, có nghiệp vụ PCCC tốt',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_003',
-    ma_nhan_su: 'ANTT-LV-003',
-    stt: 3,
-    ho_ten: 'Lê Thị Thu Thảo',
-    ngay_sinh: '1995-08-12',
-    gioi_tinh: 'Nữ',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Xã Lai Vung, Tỉnh Đồng Tháp',
-    noi_o_hien_nay: 'Tổ 1, Ấp An Bình, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Hẻm 12 Đường Nông Thôn Mới',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Cao đẳng',
-    chuyen_nganh: 'Luật học',
-    so_cccd: '087195006789',
-    ngay_cap_cccd: '2023-01-10',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Vietcombank',
-    so_tai_khoan: '0071001293849',
-    vneid_muc_2: true,
-    so_dien_thoai: '0903124578',
-    ghi_chu: 'Hỗ trợ công tác tuyên truyền pháp luật và xử lý hồ sơ',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_004',
-    ma_nhan_su: 'ANTT-LV-004',
-    stt: 4,
-    ho_ten: 'Phạm Minh Trí',
-    ngay_sinh: '2001-05-24',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Bình, Xã Lai Vung, Tỉnh Đồng Tháp',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Cụm 3, gần Chợ Đình',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Chưa qua đào tạo',
-    so_cccd: '087201009812',
-    ngay_cap_cccd: '2021-12-05',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-08-15',
-    so_quyet_dinh: '158/QĐ-UBND',
-    co_tai_khoan: false,
-    vneid_muc_2: true,
-    so_dien_thoai: '0389123456',
-    ghi_chu: 'Đoàn viên thanh niên xung kích, tích cực tuần tra đêm',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-08-15T08:00:00.000Z',
-    updated_at: '2024-08-15T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_005',
-    ma_nhan_su: 'ANTT-LV-005',
-    stt: 5,
-    ho_ten: 'Võ Quốc Tuấn',
-    ngay_sinh: '1968-02-18',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Hòa, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_02',
-    dia_chi_chi_tiet: 'QL54 Km 12+300',
-    to_antt_id: 'to_02',
-    chuc_vu: 'Tổ trưởng',
-    trinh_do_hoc_van: 'THCS',
-    trinh_do_chuyen_mon: 'Sơ cấp',
-    chuyen_nganh: 'Công an xã bán chuyên trách',
-    so_cccd: '087068003321',
-    ngay_cap_cccd: '2022-04-12',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '1998-05-19',
-    ngay_chinh_thuc: '1999-05-19',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank',
-    so_tai_khoan: '6508201994821',
-    vneid_muc_2: true,
-    so_dien_thoai: '0913987654',
-    ghi_chu: 'Nhiều năm làm Công an viên bán chuyên trách',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_006',
-    ma_nhan_su: 'ANTT-LV-006',
-    stt: 6,
-    ho_ten: 'Chau Phước Hậu',
-    ngay_sinh: '1989-10-05',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Khmer',
-    biet_tieng_dan_toc: true,
-    tieng_dan_toc: 'Tiếng Khmer Nam Bộ',
-    que_quan: 'Tri Tôn, An Giang',
-    noi_o_hien_nay: 'Ấp An Hòa, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_02',
-    dia_chi_chi_tiet: 'Khu vực Chùa Khmer liên ấp',
-    to_antt_id: 'to_02',
-    chuc_vu: 'Tổ phó',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Trung cấp',
-    chuyen_nganh: 'Hành chính văn phòng',
-    so_cccd: '087089008912',
-    ngay_cap_cccd: '2021-09-20',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'BIDV',
-    so_tai_khoan: '7411000284719',
-    vneid_muc_2: true,
-    so_dien_thoai: '0988776655',
-    ghi_chu: 'Biết tiếng Khmer, thuận lợi trong công tác nắm tình hình đồng bào',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_007',
-    ma_nhan_su: 'ANTT-LV-007',
-    stt: 7,
-    ho_ten: 'Đặng Kim Chi',
-    ngay_sinh: '1992-03-30',
-    gioi_tinh: 'Nữ',
-    dan_toc: 'Hoa',
-    biet_tieng_dan_toc: true,
-    tieng_dan_toc: 'Tiếng Quảng Đông',
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Hòa, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_02',
-    dia_chi_chi_tiet: 'Đường Liên Thôn 4',
-    to_antt_id: 'to_02',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Đại học',
-    chuyen_nganh: 'Sư phạm Ngoại ngữ',
-    so_cccd: '087192005432',
-    ngay_cap_cccd: '2022-11-04',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2018-04-30',
-    ngay_chinh_thuc: '2019-04-30',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'MB Bank',
-    so_tai_khoan: '091283921882',
-    vneid_muc_2: true,
-    so_dien_thoai: '0939112233',
-    ghi_chu: 'Hỗ trợ phiên dịch và hòa giải cơ sở',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_008',
-    ma_nhan_su: 'ANTT-LV-008',
-    stt: 8,
-    ho_ten: 'Nguyễn Văn Đạt',
-    ngay_sinh: '1952-12-01', // Trên 70 tuổi
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Xã Lai Vung, Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Khương, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_03',
-    dia_chi_chi_tiet: 'Bến đò An Khương',
-    to_antt_id: 'to_03',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THCS',
-    trinh_do_chuyen_mon: 'Chưa qua đào tạo',
-    so_cccd: '087052001199',
-    ngay_cap_cccd: '2021-06-18',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '1980-02-03',
-    ngay_chinh_thuc: '1981-02-03',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: false,
-    vneid_muc_2: false, // Hồ sơ cần cập nhật VNeID
-    so_dien_thoai: '0277384912',
-    ghi_chu: 'Người có uy tín trong ấp, lớn tuổi cần hỗ trợ VNeID và ngân hàng',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_009',
-    ma_nhan_su: 'ANTT-LV-009',
-    stt: 9,
-    ho_ten: 'Dương Văn Thành',
-    ngay_sinh: '1979-06-14',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Khương, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_03',
-    dia_chi_chi_tiet: 'Tổ 4, Ấp An Khương',
-    to_antt_id: 'to_03',
-    chuc_vu: 'Tổ trưởng',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Trung cấp',
-    chuyen_nganh: 'Kỹ thuật nông nghiệp',
-    so_cccd: '087079004411',
-    ngay_cap_cccd: '2022-08-11',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2012-07-27',
-    ngay_chinh_thuc: '2013-07-27',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank',
-    so_tai_khoan: '6508207183921',
-    vneid_muc_2: true,
-    so_dien_thoai: '0919283746',
-    ghi_chu: 'Quản lý tốt an ninh trật tự khu vực ven sông',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_010',
-    ma_nhan_su: 'ANTT-LV-010',
-    stt: 10,
-    ho_ten: 'Huỳnh Văn Sang',
-    ngay_sinh: '1985-09-09',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Khương, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_03',
-    dia_chi_chi_tiet: 'Cầu Rạch Ngựa',
-    to_antt_id: 'to_03',
-    chuc_vu: 'Tổ phó',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Sơ cấp',
-    so_cccd: '087085006622',
-    ngay_cap_cccd: '2021-10-15',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Sacombank',
-    so_tai_khoan: '070182736412',
-    vneid_muc_2: true,
-    so_dien_thoai: '0948572910',
-    ghi_chu: 'Lực lượng nòng cốt phong trào toàn dân bảo vệ an ninh Tổ quốc',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_011',
-    ma_nhan_su: 'ANTT-LV-011',
-    stt: 11,
-    ho_ten: 'Bùi Thị Mỹ Duyên',
-    ngay_sinh: '1998-11-15',
-    gioi_tinh: 'Nữ',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Xã Lai Vung, Tỉnh Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Lạc, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_04',
-    dia_chi_chi_tiet: 'Gần Trường THCS Lai Vung',
-    to_antt_id: 'to_04',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Đại học',
-    chuyen_nganh: 'Công nghệ thông tin',
-    so_cccd: '087198007788',
-    ngay_cap_cccd: '2023-04-05',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-09-01',
-    so_quyet_dinh: '189/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Techcombank',
-    so_tai_khoan: '19038291048291',
-    vneid_muc_2: true,
-    so_dien_thoai: '0967891234',
-    ghi_chu: 'Hỗ trợ quản trị dữ liệu dân cư và chuyển đổi số tại ấp',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-09-01T08:00:00.000Z',
-    updated_at: '2024-09-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_012',
-    ma_nhan_su: 'ANTT-LV-012',
-    stt: 12,
-    ho_ten: 'Lê Văn Bảy',
-    ngay_sinh: '1963-07-22',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Lạc, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_04',
-    dia_chi_chi_tiet: 'Kênh ranh An Lạc - Tân Thành',
-    to_antt_id: 'to_04',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THCS',
-    trinh_do_chuyen_mon: 'Chưa qua đào tạo',
-    so_cccd: '087063009988',
-    ngay_cap_cccd: '2021-07-20',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '1992-09-02',
-    ngay_chinh_thuc: '1993-09-02',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank',
-    so_tai_khoan: '6508204918231',
-    vneid_muc_2: true,
-    so_dien_thoai: '0912384756',
-    ghi_chu: 'Nắm chắc địa bàn giáp ranh',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_013',
-    ma_nhan_su: 'ANTT-LV-013',
-    stt: 13,
-    ho_ten: 'Ngô Văn Nghĩa',
-    ngay_sinh: '1973-01-19',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Lạc, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_04',
-    dia_chi_chi_tiet: 'Ấp An Lạc',
-    to_antt_id: 'to_04',
-    chuc_vu: 'Tổ trưởng',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Trung cấp',
-    chuyen_nganh: 'Quân sự',
-    so_cccd: '087073004821',
-    ngay_cap_cccd: '2022-05-19',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2008-05-19',
-    ngay_chinh_thuc: '2009-05-19',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank',
-    so_tai_khoan: '6508203928173',
-    vneid_muc_2: true,
-    so_dien_thoai: '0918765432',
-    ghi_chu: 'Chỉ huy tuần tra địa bàn ấp An Lạc',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_014',
-    ma_nhan_su: 'ANTT-LV-014',
-    stt: 14,
-    ho_ten: 'Đoàn Thanh Nhã',
-    ngay_sinh: '1987-04-02',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Lạc, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_04',
-    dia_chi_chi_tiet: 'Tổ 3, An Lạc',
-    to_antt_id: 'to_04',
-    chuc_vu: 'Tổ phó',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Sơ cấp',
-    so_cccd: '087087002938',
-    ngay_cap_cccd: '2021-11-20',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'VietinBank',
-    so_tai_khoan: '107829103948',
-    vneid_muc_2: true,
-    so_dien_thoai: '0978123890',
-    ghi_chu: 'Thường trực tại chốt an ninh',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-07-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_015',
-    ma_nhan_su: 'ANTT-LV-015',
-    stt: 15,
-    ho_ten: 'Nguyễn Hoàng Khang',
-    ngay_sinh: '2004-09-10', // 18-30 tuổi
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Bình, Xã Lai Vung',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Tổ 6, Ấp An Bình',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Thành viên',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Chưa qua đào tạo',
-    so_cccd: '', // Cố ý để trống để tạo hồ sơ cần cập nhật mẫu
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-09-01',
-    co_tai_khoan: false,
-    vneid_muc_2: false,
-    so_dien_thoai: '0372819203',
-    ghi_chu: 'Mới kết nạp, đang làm thủ tục làm lại CCCD và mở tài khoản',
-    trang_thai: 'dang_hoat_dong',
-    created_at: '2024-09-01T08:00:00.000Z',
-    updated_at: '2024-09-01T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_demo_dismissed_01',
-    ma_nhan_su: 'ANTT-LV-088',
-    stt: 19,
-    ho_ten: 'Đặng Văn Phước',
-    ngay_sinh: '1961-03-12',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Ấp An Bình, Xã Lai Vung, Đồng Tháp',
-    ap_id: 'ap_01',
-    dia_chi_chi_tiet: 'Tổ 3, Ấp An Bình',
-    to_antt_id: 'to_01',
-    chuc_vu: 'Thành viên',
-    chuc_vu_kiem_nhiem: 'Không kiêm nhiệm',
-    trinh_do_hoc_van: 'THCS',
-    trinh_do_chuyen_mon: 'Chưa qua đào tạo',
-    so_cccd: '087061005544',
-    ngay_cap_cccd: '2021-06-15',
-    dang_vien: false,
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Agribank',
-    so_tai_khoan: '6508205192831',
-    vneid_muc_2: true,
-    so_dien_thoai: '0918765432',
-    ghi_chu: 'Đã hoàn thành tốt nhiệm vụ trong thời gian công tác, tự nguyện xin nghỉ do sức khỏe.',
-    trang_thai: 'da_thoi_viec',
-    so_quyet_dinh_thoi_viec: '28/QĐ-UBND',
-    ngay_quyet_dinh_thoi_viec: '2024-08-20',
-    ngay_thoi_viec: '2024-08-25',
-    co_quan_ban_hanh_thoi_viec: 'Ủy ban nhân dân xã Lai Vung',
-    nguoi_ky_thoi_viec: 'Chủ tịch UBND xã',
-    ly_do_thoi_viec: 'Có đơn xin thôi tham gia lực lượng theo nguyện vọng cá nhân (lý do sức khỏe và quá tuổi)',
-    da_thu_hoi_the_trang_thiet_bi: true,
-    ghi_chu_thoi_viec: 'Đã bàn giao đầy đủ Thẻ ANTT và trang phục cho Công an xã',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-08-25T08:00:00.000Z',
-    is_demo: true,
-  },
-  {
-    id: 'ns_demo_dismissed_02',
-    ma_nhan_su: 'ANTT-LV-089',
-    stt: 20,
-    ho_ten: 'Trần Văn Cường',
-    ngay_sinh: '1990-09-15',
-    gioi_tinh: 'Nam',
-    dan_toc: 'Kinh',
-    biet_tieng_dan_toc: false,
-    que_quan: 'Lai Vung, Đồng Tháp',
-    noi_o_hien_nay: 'Thành phố Cần Thơ (trước đây ở Ấp An Hòa, Lai Vung)',
-    ap_id: 'ap_02',
-    dia_chi_chi_tiet: 'Ấp An Hòa',
-    to_antt_id: 'to_02',
-    chuc_vu: 'Tổ phó',
-    chuc_vu_kiem_nhiem: 'Tổ phó dân phòng',
-    trinh_do_hoc_van: 'THPT',
-    trinh_do_chuyen_mon: 'Trung cấp',
-    chuyen_nganh: 'Công nghệ thông tin',
-    so_cccd: '087090008899',
-    ngay_cap_cccd: '2022-10-10',
-    dang_vien: true,
-    ngay_vao_dang_du_bi: '2018-03-26',
-    ngay_chinh_thuc: '2019-03-26',
-    ngay_tham_gia_antt: '2024-07-01',
-    so_quyet_dinh: '124/QĐ-UBND',
-    co_tai_khoan: true,
-    loai_ngan_hang: 'Vietcombank',
-    so_tai_khoan: '0071009876543',
-    vneid_muc_2: true,
-    so_dien_thoai: '0939112233',
-    ghi_chu: 'Chuyển công tác và nơi cư trú lên Cần Thơ theo gia đình.',
-    trang_thai: 'da_thoi_viec',
-    so_quyet_dinh_thoi_viec: '45/QĐ-UBND',
-    ngay_quyet_dinh_thoi_viec: '2024-10-05',
-    ngay_thoi_viec: '2024-10-10',
-    co_quan_ban_hanh_thoi_viec: 'Ủy ban nhân dân xã Lai Vung',
-    nguoi_ky_thoi_viec: 'Chủ tịch UBND xã',
-    ly_do_thoi_viec: 'Chuyển nơi cư trú ra ngoài địa bàn xã Lai Vung',
-    da_thu_hoi_the_trang_thiet_bi: true,
-    ghi_chu_thoi_viec: 'Đã hoàn tất thủ tục bàn giao nhiệm vụ Tổ phó cho đồng chí mới',
-    created_at: '2024-07-01T08:00:00.000Z',
-    updated_at: '2024-10-10T08:00:00.000Z',
-    is_demo: true,
-  },
-];
-
-const INITIAL_TUAN_TRA: NhatKyTuanTra[] = [
-  {
-    id: 'tt_001',
-    ngay_tuan_tra: '2026-09-17',
-    ca_tuan_tra: 'Ca đêm (22h00 - 05h00)',
-    so_cuoc_cong_khai: 2,
-    so_cuoc_mat_phuc: 1,
-    tong_so_cuoc: 3,
-    so_luot_thanh_vien: 6,
-    danh_sach_thanh_vien_ids: ['ns_001', 'ns_002', 'ns_004', 'ns_005'],
-    can_bo_cong_an_phu_trach: 'Trung tá Trần Thanh Tuấn - Phó Trưởng Công an xã',
-    ap_ids: ['ap_01', 'ap_02'],
-    tuyen_duong_dia_ban: 'Tuyến ĐT 851, đường liên ấp An Bình - An Hòa, khu vực cầu Ba Răng và chợ trung tâm xã',
-    so_vu_viec_giai_quyet: 2,
-    noi_dung_phoi_hop: 'Phối hợp Công an xã giải tán 01 nhóm thanh thiếu niên tụ tập đêm khuya gây mất trật tự trên tuyến ĐT 851; nhắc nhở 03 hộ dân mặt tiền để xe máy sơ hở; tuần tra khép kín địa bàn.',
-    ket_qua_noi_bat: 'Không để xảy ra trộm cắp tài sản và tệ nạn xã hội trong ca trực; đảm bảo an ninh trật tự tuyệt đối.',
-    ghi_chu: 'Tổ tuần tra quân số đầy đủ, đúng lễ tiết tác phong CAND.',
-    nguoi_ghi_so: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-09-17T06:00:00.000Z',
-    updated_at: '2026-09-17T06:00:00.000Z',
-  },
-  {
-    id: 'tt_002',
-    ngay_tuan_tra: '2026-09-16',
-    ca_tuan_tra: 'Ca tối (17h00 - 22h00)',
-    so_cuoc_cong_khai: 1,
-    so_cuoc_mat_phuc: 2,
-    tong_so_cuoc: 3,
-    so_luot_thanh_vien: 5,
-    danh_sach_thanh_vien_ids: ['ns_007', 'ns_008', 'ns_010'],
-    can_bo_cong_an_phu_trach: 'Đại úy Lê Hoàng Minh',
-    ap_ids: ['ap_03', 'ap_04'],
-    tuyen_duong_dia_ban: 'Tuyến Quốc lộ 54 đoạn qua xã Lai Vung, khu vực bến đò An Khương - An Lạc',
-    so_vu_viec_giai_quyet: 1,
-    noi_dung_phoi_hop: 'Phối hợp mật phục phát hiện, giải tán 01 điểm đánh bạc ăn tiền nhỏ tự phát tại bãi đất trống ấp An Khương; tạm giữ tang vật bàn giao Công an xã lập biên bản xử lý theo thẩm quyền.',
-    ket_qua_noi_bat: 'Kịp thời ngăn chặn tụ điểm cờ bạc manh nha, nhân dân trong ấp hoan nghênh.',
-    ghi_chu: 'Lực lượng ANTT cơ sở phát huy tốt vai trò nắm tình hình địa bàn.',
-    nguoi_ghi_so: 'Đại úy Lê Hoàng Minh',
-    created_at: '2026-09-16T22:30:00.000Z',
-    updated_at: '2026-09-16T22:30:00.000Z',
-  },
-  {
-    id: 'tt_003',
-    ngay_tuan_tra: '2026-09-15',
-    ca_tuan_tra: 'Ca ngày (07h00 - 17h00)',
-    so_cuoc_cong_khai: 2,
-    so_cuoc_mat_phuc: 0,
-    tong_so_cuoc: 2,
-    so_luot_thanh_vien: 4,
-    danh_sach_thanh_vien_ids: ['ns_001', 'ns_003'],
-    can_bo_cong_an_phu_trach: 'Thượng úy Nguyễn Văn Hậu',
-    ap_ids: ['ap_01', 'ap_05'],
-    tuyen_duong_dia_ban: 'Cổng trường THCS Lai Vung, khu vực chợ xã và tuyến đê bao vườn quýt hồng',
-    so_vu_viec_giai_quyet: 2,
-    noi_dung_phoi_hop: 'Phối hợp bảo đảm trật tự an toàn giao thông tại cổng trường học trong giờ tan tầm; tuyên truyền, hòa giải mâu thuẫn tranh chấp ranh đất sinh hoạt giữa 2 hộ dân ấp An Lợi A, giữ vững tình làng nghĩa xóm.',
-    ket_qua_noi_bat: 'Không ùn tắc giao thông, hòa giải thành mâu thuẫn tranh chấp ngay tại cơ sở.',
-    ghi_chu: 'Ca trực hoàn thành xuất sắc nhiệm vụ.',
-    nguoi_ghi_so: 'Thượng úy Nguyễn Văn Hậu',
-    created_at: '2026-09-15T17:30:00.000Z',
-    updated_at: '2026-09-15T17:30:00.000Z',
-  },
-];
-
-const INITIAL_TAP_HUAN: DotTapHuan[] = [
-  {
-    id: 'th_001',
-    ten_dot: 'Tập huấn bồi dưỡng pháp luật và nghiệp vụ lực lượng ANTT cơ sở năm 2026',
-    chuyen_de: 'Triển khai thi hành Luật Lực lượng tham gia bảo vệ ANTT ở cơ sở (Luật số 30/2023/QH15); Kỹ năng nắm tình hình và xử lý tin báo ban đầu',
-    thoi_gian_bat_dau: '2026-07-15',
-    thoi_gian_ket_thuc: '2026-07-20',
-    dia_diem: 'Hội trường Trung tâm Văn hóa - Học tập cộng đồng xã Lai Vung',
-    don_vi_to_chuc: 'Công an tỉnh Đồng Tháp',
-    so_lop: 2,
-    so_thanh_vien_tham_gia: 35,
-    danh_sach_thanh_vien_ids: ['ns_001', 'ns_002', 'ns_003', 'ns_004', 'ns_005', 'ns_007', 'ns_008', 'ns_010'],
-    noi_dung_tap_huan: 'Phổ biến Luật số 30/2023/QH15, các văn bản quy phạm pháp luật liên quan; nhiệm vụ, quyền hạn, nguyên tắc hoạt động của lực lượng ANTT cơ sở; phương pháp phối hợp với Công an chính quy trong tuần tra, kiểm soát và xử lý tình huống phát sinh.',
-    ket_qua_danh_gia: {
-      so_dat: 35,
-      so_gioi_xuat_sac: 12,
-      so_chua_dat: 0,
-      ty_le_hoan_thanh: 100,
-    },
-    kinh_phi_ho_tro: 5250000,
-    trang_thai: 'da_hoan_thanh',
-    ghi_chu: '100% học viên tham gia đầy đủ, đạt kiểm tra cuối khóa và được cấp Giấy chứng nhận hoàn thành lớp bồi dưỡng.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-07-21T08:00:00.000Z',
-    updated_at: '2026-07-21T08:00:00.000Z',
-  },
-  {
-    id: 'th_002',
-    ten_dot: 'Huấn luyện kỹ năng Phòng cháy, chữa cháy và Cứu nạn, cứu hộ (PCCC & CNCH)',
-    chuyen_de: 'Thực hành dập lửa ban đầu bằng bình bột, bình khí CO2; Kỹ năng thoát hiểm, cứu nạn trong đám cháy và sơ cứu y tế',
-    thoi_gian_bat_dau: '2026-08-22',
-    thoi_gian_ket_thuc: '2026-08-24',
-    dia_diem: 'Sân vận động và khuôn viên UBND xã Lai Vung',
-    don_vi_to_chuc: 'Công an xã Lai Vung',
-    so_lop: 1,
-    so_thanh_vien_tham_gia: 28,
-    danh_sach_thanh_vien_ids: ['ns_001', 'ns_002', 'ns_004', 'ns_007'],
-    noi_dung_tap_huan: 'Quy trình xử lý khi phát hiện cháy nổ tại khu dân cư và chợ; thao tác rải vòi, sử dụng bình chữa cháy xách tay dập tắt khay xăng cháy; kỹ năng di chuyển nạn nhân bị ngạt khói và sơ cấp cứu ban đầu.',
-    ket_qua_danh_gia: {
-      so_dat: 28,
-      so_gioi_xuat_sac: 9,
-      so_chua_dat: 0,
-      ty_le_hoan_thanh: 100,
-    },
-    kinh_phi_ho_tro: 2800000,
-    trang_thai: 'da_hoan_thanh',
-    ghi_chu: 'Các thành viên thực hành thuần thục, sẵn sàng làm nòng cốt PCCC tại các ấp.',
-    nguoi_nhap: 'Đại úy Lê Hoàng Minh',
-    created_at: '2026-08-25T08:00:00.000Z',
-    updated_at: '2026-08-25T08:00:00.000Z',
-  },
-  {
-    id: 'th_003',
-    ten_dot: 'Bồi dưỡng võ thuật tự vệ, sử dụng công cụ hỗ trợ và giải tán đám đông',
-    chuyen_de: 'Kỹ thuật tay không tự vệ khống chế đối tượng, sử dụng gậy cao su, dây trói nghiệp vụ và phương án bảo vệ mục tiêu',
-    thoi_gian_bat_dau: '2026-10-05',
-    thoi_gian_ket_thuc: '2026-10-08',
-    dia_diem: 'Nhà thi đấu đa năng xã Lai Vung',
-    don_vi_to_chuc: 'Công an tỉnh Đồng Tháp',
-    so_lop: 1,
-    so_thanh_vien_tham_gia: 30,
-    danh_sach_thanh_vien_ids: [],
-    noi_dung_tap_huan: 'Huấn luyện thế võ CAND tự vệ, kỹ năng tự vệ khi bị tấn công bằng hung khí, kỹ thuật khóa tay khống chế; quy tắc bảo quản và sử dụng đúng quy định pháp luật các loại công cụ hỗ trợ được trang bị.',
-    ket_qua_danh_gia: {
-      so_dat: 0,
-      so_gioi_xuat_sac: 0,
-      so_chua_dat: 0,
-      ty_le_hoan_thanh: 0,
-    },
-    trang_thai: 'ke_hoach',
-    ghi_chu: 'Đang lập danh sách rà soát thể lực các thành viên trẻ tuổi cử đi tập huấn.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-09-10T09:00:00.000Z',
-    updated_at: '2026-09-10T09:00:00.000Z',
-  },
-];
-
-const INITIAL_KHEN_THUONG: HoSoKhenThuong[] = [
-  {
-    id: 'kt_001',
-    loai_khen_thuong: 'DotXuat',
-    cap_khen_thuong: 'UBND_TINH',
-    hinh_thuc: 'Bằng khen của Chủ tịch UBND tỉnh Đồng Tháp',
-    thanh_vien_id: 'ns_001',
-    ten_nguoi_khen_thuong: 'Nguyễn Văn An (Tổ trưởng Tổ ANTT Ấp An Bình)',
-    to_antt_id: 'to_01',
-    so_quyet_dinh: '312/QĐ-UBND-KT',
-    ngay_quyet_dinh: '2026-08-12',
-    co_quan_ban_hanh: 'Ủy ban nhân dân tỉnh Đồng Tháp',
-    nguoi_ky: 'Chủ tịch UBND tỉnh',
-    ly_do_khen_thuong: 'Đã có thành tích đột xuất xuất sắc, dũng cảm mưu trí vây bắt đối tượng trộm cắp tài sản có mang theo hung khí tại khu vực giáp ranh, thu hồi tài sản trị giá hơn 60 triệu đồng trả lại cho nhân dân.',
-    tien_thuong: 3500000,
-    nam_khen_thuong: 2026,
-    ghi_chu: 'Đã trao thưởng trang trọng tại Hội nghị sơ kết phong trào TDBVANTQ.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-08-13T09:00:00.000Z',
-    updated_at: '2026-08-13T09:00:00.000Z',
-  },
-  {
-    id: 'kt_002',
-    loai_khen_thuong: 'DinhKy',
-    cap_khen_thuong: 'CONG_AN_TINH',
-    hinh_thuc: 'Giấy khen của Giám đốc Công an tỉnh Đồng Tháp',
-    thanh_vien_id: 'ns_004',
-    ten_nguoi_khen_thuong: 'Trần Hữu Bình (Tổ phó Tổ ANTT Ấp An Hòa)',
-    to_antt_id: 'to_02',
-    so_quyet_dinh: '88/QĐ-CAT-PX03',
-    ngay_quyet_dinh: '2026-08-19',
-    co_quan_ban_hanh: 'Công an tỉnh Đồng Tháp',
-    nguoi_ky: 'Giám đốc Công an tỉnh',
-    ly_do_khen_thuong: 'Đã có thành tích xuất sắc trong đợt cao điểm thi đua chào mừng 81 năm Ngày truyền thống CAND Việt Nam và Ngày hội Toàn dân bảo vệ an ninh Tổ quốc năm 2026.',
-    tien_thuong: 1800000,
-    nam_khen_thuong: 2026,
-    ghi_chu: 'Khen thưởng định kỳ nhân dịp 19/8.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-08-20T10:00:00.000Z',
-    updated_at: '2026-08-20T10:00:00.000Z',
-  },
-  {
-    id: 'kt_003',
-    loai_khen_thuong: 'DotXuat',
-    cap_khen_thuong: 'UBND_XA',
-    hinh_thuc: 'Giấy khen của Chủ tịch UBND xã Lai Vung',
-    thanh_vien_id: 'ns_008',
-    ten_nguoi_khen_thuong: 'Lê Văn Cường (Thành viên Tổ ANTT Ấp An Khương)',
-    to_antt_id: 'to_03',
-    so_quyet_dinh: '45/QĐ-UBND',
-    ngay_quyet_dinh: '2026-09-05',
-    co_quan_ban_hanh: 'Ủy ban nhân dân xã Lai Vung',
-    nguoi_ky: 'Chủ tịch UBND xã',
-    ly_do_khen_thuong: 'Đã có hành động dũng cảm cứu vớt 02 cháu nhỏ bị đuối nước tại tuyến kênh Mương Khai, ấp An Khương và khẩn trương sơ cấp cứu kịp thời bảo toàn tính mạng.',
-    tien_thuong: 1000000,
-    nam_khen_thuong: 2026,
-    ghi_chu: 'Gương người tốt việc tốt tiêu biểu của lực lượng ANTT cơ sở.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-09-06T08:00:00.000Z',
-    updated_at: '2026-09-06T08:00:00.000Z',
-  },
-  {
-    id: 'kt_004',
-    loai_khen_thuong: 'DinhKy',
-    cap_khen_thuong: 'UBND_XA',
-    hinh_thuc: 'Giấy khen của Chủ tịch UBND xã Lai Vung',
-    ten_nguoi_khen_thuong: 'Tập thể Tổ ANTT Ấp An Lạc',
-    to_antt_id: 'to_04',
-    so_quyet_dinh: '18/QĐ-UBND',
-    ngay_quyet_dinh: '2026-01-15',
-    co_quan_ban_hanh: 'Ủy ban nhân dân xã Lai Vung',
-    nguoi_ky: 'Chủ tịch UBND xã',
-    ly_do_khen_thuong: 'Đã có thành tích hoàn thành xuất sắc nhiệm vụ bảo đảm an ninh trật tự, an toàn xã hội trên địa bàn ấp An Lạc trong năm 2025, giữ vững địa bàn không có tội phạm.',
-    tien_thuong: 2000000,
-    nam_khen_thuong: 2025,
-    ghi_chu: 'Khen thưởng tập thể xuất sắc tổng kết công tác năm.',
-    nguoi_nhap: 'Trung tá Trần Thanh Tuấn',
-    created_at: '2026-01-16T14:00:00.000Z',
-    updated_at: '2026-01-16T14:00:00.000Z',
-  },
-];
+const INITIAL_NHAN_SU: NhanSu[] = [];
+export const DEMO_SAMPLE_MEMBERS: NhanSu[] = [];
+const INITIAL_TUAN_TRA: NhatKyTuanTra[] = [];
+const INITIAL_TAP_HUAN: DotTapHuan[] = [];
+const INITIAL_KHEN_THUONG: HoSoKhenThuong[] = [];
 
 export type SupabaseSyncStatus =
   | 'checking'
@@ -1721,7 +898,11 @@ class StorageService {
   private syncQueue: Promise<void> = Promise.resolve();
 
   private enqueueSync(task: () => Promise<void>): Promise<void> {
-    this.syncQueue = this.syncQueue.then(task).catch(err => {
+    const generation = sessionDataCache.generation;
+    this.syncQueue = this.syncQueue.then(async () => {
+      if (generation !== sessionDataCache.generation) return;
+      await task();
+    }).catch(err => {
       console.warn('Lỗi trong hàng đợi đồng bộ Supabase:', err);
     });
     return this.syncQueue;
@@ -1735,7 +916,7 @@ class StorageService {
     clearAllPending: boolean;
   } {
     try {
-      const raw = localStorage.getItem(this.PENDING_SYNC_KEY);
+      const raw = sessionDataCache.getItem(this.PENDING_SYNC_KEY);
       if (!raw) {
         return {
           hardDeletedIds: [],
@@ -1779,7 +960,7 @@ class StorageService {
     clearAllPending: boolean;
   }): void {
     try {
-      localStorage.setItem(this.PENDING_SYNC_KEY, JSON.stringify(state));
+      sessionDataCache.setItem(this.PENDING_SYNC_KEY, JSON.stringify(state));
     } catch (e) {
       console.warn('Không thể lưu trạng thái pending sync:', e);
     }
@@ -2036,8 +1217,13 @@ class StorageService {
     message: string;
     missingTables?: boolean;
   }> {
+    const generation = sessionDataCache.generation;
     this.notifyStatus('syncing', 'Đang tải dữ liệu từ đám mây Supabase...');
     try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user || generation !== sessionDataCache.generation) {
+        return { success: false, message: 'Cần đăng nhập để tải dữ liệu.' };
+      }
       // 1. Thực thi dứt điểm các thao tác xóa/cập nhật còn đang chờ (nếu người dùng vừa bấm Xóa rồi tải lại trang ngay)
       await this.flushPendingSyncToSupabase();
 
@@ -2046,6 +1232,7 @@ class StorageService {
         .select('*')
         .order('stt', { ascending: true });
 
+      if (generation !== sessionDataCache.generation) return { success: false, message: 'Phiên đã kết thúc.' };
       if (nsErr) {
         const isMissing =
           nsErr.code === '42P01' ||
@@ -2087,19 +1274,21 @@ class StorageService {
         supabase.from(SUPABASE_TABLES.AUDIT_LOGS).select('*').order('thoi_gian', { ascending: false }).limit(500),
       ]);
 
+      if (generation !== sessionDataCache.generation) return { success: false, message: 'Phiên đã kết thúc.' };
+
       // 2. Đồng bộ từng bảng danh mục độc lập (KHÔNG tự động đẩy lại nhan_su cũ từ localStorage khi bảng nhan_su trên Supabase đã xóa hết về 0)
       if (dbData && dbData.length > 0) {
         const list = dbData.map(r => this.fromDbRow<DiaBanAp>(r));
-        localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
-      } else {
-        void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, this.getDiaBanList().map(x => this.toDiaBanRow(x)));
+        sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+      } else if (dbData) {
+        sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, '[]');
       }
 
       if (toData && toData.length > 0) {
         const list = toData.map(r => this.fromDbRow<ToANTT>(r));
-        localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
-      } else {
-        void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, this.getToANTTList().map(x => this.toToANTTRow(x)));
+        sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+      } else if (toData) {
+        sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, '[]');
       }
 
       if (nsData !== null && nsData !== undefined) {
@@ -2141,17 +1330,17 @@ class StorageService {
         }
       }
 
-      if (ttData && ttData.length > 0) {
+      if (ttData) {
         const list = ttData.map(r => this.fromDbRow<NhatKyTuanTra>(r));
-        localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(list));
+        sessionDataCache.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(list));
       }
-      if (thData && thData.length > 0) {
+      if (thData) {
         const list = thData.map(r => this.fromDbRow<DotTapHuan>(r));
-        localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(list));
+        sessionDataCache.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(list));
       }
-      if (ktData && ktData.length > 0) {
+      if (ktData) {
         const list = ktData.map(r => this.fromDbRow<HoSoKhenThuong>(r));
-        localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(list));
+        sessionDataCache.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(list));
       }
 
       // 3. Ánh xạ danh sách tài khoản bằng fromUserRow().
@@ -2162,7 +1351,7 @@ class StorageService {
       } else {
         this.lastUsersError = null;
         const list = (usrData || []).map(r => this.fromUserRow(r));
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
+        sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(list));
 
         const activeUser = this.getCurrentUser();
         if (activeUser) {
@@ -2177,9 +1366,9 @@ class StorageService {
         }
       }
 
-      if (logData && logData.length > 0) {
+      if (logData) {
         const list = logData.map(r => this.fromDbRow<AuditLog>(r));
-        localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(list));
+        sessionDataCache.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(list));
       }
 
       if (usrErr) {
@@ -2275,85 +1464,21 @@ class StorageService {
   }
 
   private initSystemAndEnforceAdmin(): void {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    const CLEAR_FLAG = 'ca_laivung_cleared_by_tuan_v1';
-    if (localStorage.getItem(CLEAR_FLAG) !== 'done') {
-      // 1. Xóa sạch toàn bộ dữ liệu nhân sự mẫu
-      localStorage.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify([]));
+    removeLegacyBusinessData();
+  }
 
-      // 2. Không tự ý gán mật khẩu hay tạo tài khoản admin giả trong localStorage
-
-      // 3. Khởi tạo nhật ký hệ thống
-      const now = new Date().toISOString();
-      const initialLog: AuditLog = {
-        id: 'log_init_' + Date.now(),
-        user_id: SYSTEM_AUDIT_USER.id,
-        user_name: SYSTEM_AUDIT_USER.fullName,
-        userName: SYSTEM_AUDIT_USER.fullName,
-        user_role: 'ADMIN',
-        userRole: 'ADMIN',
-        thoi_gian: now,
-        timestamp: now,
-        hanh_dong: 'CHINH_SUA',
-        action: 'CHINH_SUA',
-        doi_tuong: 'Cơ sở dữ liệu nhân sự ANTT cơ sở',
-        target: 'Cơ sở dữ liệu nhân sự ANTT cơ sở',
-        noi_dung_thay_doi: 'Khởi tạo hệ thống quản lý ANTT cơ sở xã Lai Vung. Xác thực tài khoản trực tiếp qua Supabase Auth.',
-        details: 'Khởi tạo hệ thống quản lý ANTT cơ sở xã Lai Vung. Xác thực tài khoản trực tiếp qua Supabase Auth.',
-      };
-      localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify([initialLog]));
-
-      localStorage.setItem(CLEAR_FLAG, 'done');
-    }
-
-    // Đảm bảo xóa phiên đăng nhập cũ để màn hình Đăng nhập & Đăng ký luôn hiện ra đầu tiên khi mở web
-    const ENFORCE_AUTH_FIRST_FLAG = 'ca_laivung_auth_first_screen_v1';
-    if (localStorage.getItem(ENFORCE_AUTH_FIRST_FLAG) !== 'done') {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
-      }
-      localStorage.setItem(ENFORCE_AUTH_FIRST_FLAG, 'done');
-    }
-
-    // Tự động cập nhật đồng bộ 19 ấp chuẩn của xã Lai Vung
-    const UPDATE_19_AP_FLAG = 'ca_laivung_19_ap_updated_v2';
-    if (localStorage.getItem(UPDATE_19_AP_FLAG) !== 'done') {
-      localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(INITIAL_DIA_BAN));
-      localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(INITIAL_TO_ANTT));
-      localStorage.setItem(UPDATE_19_AP_FLAG, 'done');
-    }
-
-    // Tự động nạp danh sách 27 thành viên chính thức theo biểu mẫu được phê duyệt
-    const SEED_27_MEMBERS_FLAG = 'ca_laivung_27_members_official_v1';
-    if (localStorage.getItem(SEED_27_MEMBERS_FLAG) !== 'done') {
-      this.savePendingSync({
-        hardDeletedIds: [],
-        softDeletedMap: {},
-        deletedTombstones: {},
-        softDeletedTombstones: {},
-        clearAllPending: false,
-      });
-      this.setNhanSuListLocalOnly(OFFICIAL_MEMBERS);
-      localStorage.setItem(SEED_27_MEMBERS_FLAG, 'done');
-    }
-
-    // Khởi tạo dữ liệu tuần tra, tập huấn, khen thưởng nếu chưa có
-    if (!localStorage.getItem(STORAGE_KEYS.TUAN_TRA)) {
-      localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(INITIAL_TUAN_TRA));
-    }
-    if (!localStorage.getItem(STORAGE_KEYS.TAP_HUAN)) {
-      localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(INITIAL_TAP_HUAN));
-    }
-    if (!localStorage.getItem(STORAGE_KEYS.KHEN_THUONG)) {
-      localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(INITIAL_KHEN_THUONG));
-    }
+  clearSessionData(): void {
+    sessionDataCache.clear();
+    this.lastUsersError = null;
+    this.lastSyncAt = undefined;
+    this.notifyStatus('checking', 'Cần đăng nhập để tải dữ liệu');
+    this.notifyDataRefresh();
   }
 
   // --- USERS & AUTH ---
   // Yêu cầu 4: Tài khoản thường chỉ được xem hồ sơ của mình; ADMIN được quản lý danh sách.
   getUsers(caller?: UserAccount): UserAccount[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.USERS);
     let users: any[] = [];
     if (raw) {
       try {
@@ -2380,7 +1505,7 @@ class StorageService {
   setUsers(users: UserAccount[]): void {
     // Chuẩn hóa và loại bỏ toàn bộ thông tin mật khẩu trước khi lưu trữ cục bộ
     const safeUsers = users.map(u => this.fromUserRow(u));
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(safeUsers));
+    sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(safeUsers));
   }
 
   async fetchUsersFromSupabase(caller?: UserAccount): Promise<{
@@ -2388,12 +1513,14 @@ class StorageService {
     users: UserAccount[];
     error?: string;
   }> {
+    const generation = sessionDataCache.generation;
     try {
       const { data, error } = await supabase
         .from(SUPABASE_TABLES.USERS)
         .select('id, username, full_name, role, chuc_vu, don_vi, so_dien_thoai, created_at, raw_data')
         .order('created_at', { ascending: true });
 
+      if (generation !== sessionDataCache.generation) return { success: false, users: [], error: 'Phiên đã kết thúc.' };
       if (error) {
         // Khi tải danh sách users lỗi, không tự đẩy danh sách tài khoản cũ từ localStorage lên Supabase
         this.lastUsersError = error.message;
@@ -2406,7 +1533,7 @@ class StorageService {
 
       this.lastUsersError = null;
       const mappedUsers = (data || []).map(r => this.fromUserRow(r));
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mappedUsers));
+      sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(mappedUsers));
 
       const activeUser = caller || this.getCurrentUser();
       if (activeUser) {
@@ -2438,7 +1565,7 @@ class StorageService {
 
   getCurrentUser(): UserAccount | null {
     if (typeof window === 'undefined') return null;
-    const raw = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.CURRENT_USER);
     if (!raw) return null;
     try {
       const parsed = JSON.parse(raw);
@@ -2453,11 +1580,10 @@ class StorageService {
     if (typeof window === 'undefined') return;
     if (user) {
       const safeUser = this.fromUserRow(user);
-      sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
+      sessionDataCache.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(safeUser));
     } else {
-      sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      sessionDataCache.removeItem(STORAGE_KEYS.CURRENT_USER);
     }
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   }
 
   async registerUser(params: {
@@ -2564,7 +1690,7 @@ class StorageService {
       const newUser = this.fromUserRow(savedRow || userRow, draftUser);
 
       // 3. Cập nhật danh sách tài khoản cục bộ
-      const rawUsers = localStorage.getItem(STORAGE_KEYS.USERS);
+      const rawUsers = sessionDataCache.getItem(STORAGE_KEYS.USERS);
       let allUsers: UserAccount[] = [];
       if (rawUsers) {
         try {
@@ -2578,7 +1704,7 @@ class StorageService {
         ...allUsers.filter(u => u.id !== newUser.id && u.username.toLowerCase() !== cleanUsername),
         newUser,
       ];
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
 
       // 4. Ghi nhật ký hệ thống (KHÔNG bao giờ chứa mật khẩu)
       this.addAuditLog(
@@ -2630,7 +1756,7 @@ class StorageService {
         return { success: false, error: error.message };
       }
 
-      const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+      const raw = sessionDataCache.getItem(STORAGE_KEYS.USERS);
       let allUsers: UserAccount[] = [];
       if (raw) {
         try {
@@ -2646,7 +1772,7 @@ class StorageService {
         }
         return u;
       });
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+      sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
 
       this.addAuditLog(
         activeUser,
@@ -2670,7 +1796,7 @@ class StorageService {
       return { success: false, error: 'Quản trị viên không thể tự xóa tài khoản của chính mình.' };
     }
 
-    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.USERS);
     let allUsers: UserAccount[] = [];
     if (raw) {
       try {
@@ -2685,7 +1811,7 @@ class StorageService {
     if (!target) return { success: false, error: 'Không tìm thấy tài khoản.' };
 
     const filtered = allUsers.filter(u => u.id !== id);
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
+    sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
     void this.bgDelete(SUPABASE_TABLES.USERS, id);
 
     this.addAuditLog(
@@ -2699,7 +1825,7 @@ class StorageService {
 
   updateUser(user: UserAccount, caller?: UserAccount): { success: boolean; error?: string } {
     const activeUser = caller || this.getCurrentUser();
-    const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.USERS);
     let allUsers: UserAccount[] = [];
     if (raw) {
       try {
@@ -2725,7 +1851,7 @@ class StorageService {
 
     const safeUser = this.fromUserRow(user, oldUser);
     allUsers[idx] = safeUser;
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(allUsers));
+    sessionDataCache.setItem(STORAGE_KEYS.USERS, JSON.stringify(allUsers));
     void this.bgUpsert(SUPABASE_TABLES.USERS, this.toUserRow(safeUser));
     return { success: true };
   }
@@ -2756,9 +1882,9 @@ class StorageService {
 
   // --- DIA BAN (ẤP) ---
   getDiaBanList(): DiaBanAp[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.DIA_BAN);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.DIA_BAN);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(INITIAL_DIA_BAN));
+      sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(INITIAL_DIA_BAN));
       return INITIAL_DIA_BAN;
     }
     try {
@@ -2769,7 +1895,7 @@ class StorageService {
   }
 
   setDiaBanList(list: DiaBanAp[]): void {
-    localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
     void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, list.map(item => this.toDiaBanRow(item)));
   }
 
@@ -2788,21 +1914,21 @@ class StorageService {
       };
       list.push(savedItem);
     }
-    localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
     void this.bgUpsert(SUPABASE_TABLES.DIA_BAN, this.toDiaBanRow(savedItem));
   }
 
   deleteDiaBan(id: string): void {
     const list = this.getDiaBanList().filter(i => i.id !== id);
-    localStorage.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.DIA_BAN, JSON.stringify(list));
     void this.bgDelete(SUPABASE_TABLES.DIA_BAN, id);
   }
 
   // --- TỔ ANTT ---
   getToANTTList(): ToANTT[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.TO_ANTT);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.TO_ANTT);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(INITIAL_TO_ANTT));
+      sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(INITIAL_TO_ANTT));
       return INITIAL_TO_ANTT;
     }
     try {
@@ -2813,7 +1939,7 @@ class StorageService {
   }
 
   setToANTTList(list: ToANTT[]): void {
-    localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
     void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, list.map(item => this.toToANTTRow(item)));
   }
 
@@ -2832,19 +1958,19 @@ class StorageService {
       };
       list.push(savedItem);
     }
-    localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
     void this.bgUpsert(SUPABASE_TABLES.TO_ANTT, this.toToANTTRow(savedItem));
   }
 
   deleteToANTT(id: string): void {
     const list = this.getToANTTList().filter(i => i.id !== id);
-    localStorage.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
+    sessionDataCache.setItem(STORAGE_KEYS.TO_ANTT, JSON.stringify(list));
     void this.bgDelete(SUPABASE_TABLES.TO_ANTT, id);
   }
 
   // --- NHÂN SỰ ---
   getNhanSuList(includeDeleted = false): NhanSu[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.NHAN_SU);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.NHAN_SU);
     let list: NhanSu[] = [];
     if (!raw) {
       this.setNhanSuListLocalOnly(INITIAL_NHAN_SU);
@@ -2866,7 +1992,7 @@ class StorageService {
 
   private setNhanSuListLocalOnly(list: NhanSu[]): boolean {
     try {
-      localStorage.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify(list));
+      sessionDataCache.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify(list));
       return true;
     } catch (e) {
       console.warn('Cảnh báo bộ nhớ trình duyệt đầy, tiến hành tối ưu hóa lưu trữ:', e);
@@ -2877,7 +2003,7 @@ class StorageService {
           }
           return m;
         });
-        localStorage.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify(optimizedList));
+        sessionDataCache.setItem(STORAGE_KEYS.NHAN_SU, JSON.stringify(optimizedList));
         return true;
       } catch (err2) {
         console.error('Không thể ghi dữ liệu nhân sự vào localStorage:', err2);
@@ -3116,7 +2242,7 @@ class StorageService {
 
   // --- AUDIT LOGS ---
   getAuditLogs(): AuditLog[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.AUDIT_LOGS);
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -3154,7 +2280,7 @@ class StorageService {
     if (logs.length > 500) {
       logs.length = 500;
     }
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
+    sessionDataCache.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(logs));
     if (!user) return Promise.resolve();
     return this.enqueueSync(async () => {
       try {
@@ -3229,7 +2355,7 @@ class StorageService {
 
   // --- TUẦN TRA & PHỐI HỢP ANTT ---
   getNhatKyTuanTraList(): NhatKyTuanTra[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.TUAN_TRA);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.TUAN_TRA);
     if (!raw) return INITIAL_TUAN_TRA;
     try {
       return JSON.parse(raw);
@@ -3269,7 +2395,7 @@ class StorageService {
       );
     }
 
-    localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
     void this.bgUpsert(SUPABASE_TABLES.TUAN_TRA, this.toTuanTraRow(finalItem));
     return finalItem;
   }
@@ -3281,7 +2407,7 @@ class StorageService {
 
     const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
-    localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.TUAN_TRA, id);
 
     this.addAuditLog(
@@ -3294,7 +2420,7 @@ class StorageService {
 
   // --- QUẢN LÝ TẬP HUẤN NGHIỆP VỤ ---
   getDotTapHuanList(): DotTapHuan[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.TAP_HUAN);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.TAP_HUAN);
     if (!raw) return INITIAL_TAP_HUAN;
     try {
       return JSON.parse(raw);
@@ -3333,7 +2459,7 @@ class StorageService {
       );
     }
 
-    localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
     void this.bgUpsert(SUPABASE_TABLES.TAP_HUAN, this.toTapHuanRow(finalItem));
     return finalItem;
   }
@@ -3345,7 +2471,7 @@ class StorageService {
 
     const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
-    localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.TAP_HUAN, id);
 
     this.addAuditLog(
@@ -3358,7 +2484,7 @@ class StorageService {
 
   // --- QUẢN LÝ THI ĐUA - KHEN THƯỞNG ---
   getHoSoKhenThuongList(): HoSoKhenThuong[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.KHEN_THUONG);
+    const raw = sessionDataCache.getItem(STORAGE_KEYS.KHEN_THUONG);
     if (!raw) return INITIAL_KHEN_THUONG;
     try {
       return JSON.parse(raw);
@@ -3400,7 +2526,7 @@ class StorageService {
       );
     }
 
-    localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
     void this.bgUpsert(SUPABASE_TABLES.KHEN_THUONG, this.toKhenThuongRow(finalItem));
     return finalItem;
   }
@@ -3412,7 +2538,7 @@ class StorageService {
 
     const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
     const updated = list.filter(x => x.id !== id);
-    localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
+    sessionDataCache.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(updated));
     void this.bgDelete(SUPABASE_TABLES.KHEN_THUONG, id);
 
     this.addAuditLog(
@@ -3463,16 +2589,16 @@ class StorageService {
       if (parsed.data.to_antt) this.setToANTTList(parsed.data.to_antt);
       if (parsed.data.nhan_su) this.setNhanSuList(parsed.data.nhan_su);
       if (parsed.data.audit_logs) {
-        localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(parsed.data.audit_logs));
+        sessionDataCache.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(parsed.data.audit_logs));
       }
       if (parsed.data.tuan_tra) {
-        localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(parsed.data.tuan_tra));
+        sessionDataCache.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(parsed.data.tuan_tra));
       }
       if (parsed.data.tap_huan) {
-        localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(parsed.data.tap_huan));
+        sessionDataCache.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(parsed.data.tap_huan));
       }
       if (parsed.data.khen_thuong) {
-        localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(parsed.data.khen_thuong));
+        sessionDataCache.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(parsed.data.khen_thuong));
       }
 
       void this.pushAllToSupabase();
@@ -3491,21 +2617,7 @@ class StorageService {
   }
 
   resetToDemoData(): void {
-    this.savePendingSync({
-      hardDeletedIds: [],
-      softDeletedMap: {},
-      deletedTombstones: {},
-      softDeletedTombstones: {},
-      clearAllPending: false,
-    });
-    // Không ghi đè tài khoản người dùng khi khôi phục danh mục mẫu
-    this.setDiaBanList(INITIAL_DIA_BAN);
-    this.setToANTTList(INITIAL_TO_ANTT);
-    this.setNhanSuList(DEMO_SAMPLE_MEMBERS);
-    localStorage.setItem(STORAGE_KEYS.TUAN_TRA, JSON.stringify(INITIAL_TUAN_TRA));
-    localStorage.setItem(STORAGE_KEYS.TAP_HUAN, JSON.stringify(INITIAL_TAP_HUAN));
-    localStorage.setItem(STORAGE_KEYS.KHEN_THUONG, JSON.stringify(INITIAL_KHEN_THUONG));
-    void this.pushAllToSupabase();
+    throw new Error('Bản vận hành không chứa dữ liệu mẫu. Hãy tải dữ liệu từ Supabase.');
   }
 
   clearAllData(user?: UserAccount): void {

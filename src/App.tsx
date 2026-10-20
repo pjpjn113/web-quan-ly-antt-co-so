@@ -9,6 +9,7 @@ import {
   DismissMemberData
 } from './types';
 import { storageService } from './services/storage';
+import { sessionDataCache } from './services/sessionDataCache';
 import { supabase, SUPABASE_TABLES } from './services/supabaseClient';
 import { Header } from './components/layout/Header';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
@@ -38,9 +39,7 @@ import { findMissingFields } from './utils/helpers';
 
 export default function App() {
   // Current logged in user
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    return storageService.getCurrentUser();
-  });
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
 
   // Main data states
   const [members, setMembers] = useState<NhanSu[]>([]);
@@ -109,14 +108,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    let disposed = false;
     const unsub = storageService.subscribeDataRefresh(loadData);
-    void storageService.pullFromSupabase();
 
     // Đồng bộ phiên đăng nhập từ Supabase Auth
     const syncAuthSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const generation = sessionDataCache.generation;
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (disposed || generation !== sessionDataCache.generation) return;
+        const session = !authError && authData.user ? { user: authData.user } : null;
         if (session?.user) {
           const { data: profile } = await supabase
             .from(SUPABASE_TABLES.USERS)
@@ -124,6 +125,7 @@ export default function App() {
             .eq('id', session.user.id)
             .maybeSingle();
 
+          if (disposed || generation !== sessionDataCache.generation) return;
           if (profile) {
             const existingUser = storageService.getCurrentUser();
             const user = storageService.fromUserRow(profile, {
@@ -161,10 +163,27 @@ export default function App() {
       } catch (err) {
         console.warn('Không thể đồng bộ phiên Supabase Auth:', err);
       }
+      if (!disposed && storageService.getCurrentUser()) {
+        await storageService.pullFromSupabase();
+      }
     };
 
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        storageService.clearSessionData();
+        setCurrentUser(null);
+        setEditingMember(null);
+        setViewingMember(null);
+        setIsFormModalOpen(false);
+        setAppDismissMember(null);
+        setAppDecisionMember(null);
+      } else if (event === 'SIGNED_IN') {
+        // Do not await Supabase calls inside its auth callback.
+        setTimeout(() => { if (!disposed) void syncAuthSession(); }, 0);
+      }
+    });
     void syncAuthSession();
-    return unsub;
+    return () => { disposed = true; unsub(); subscription.unsubscribe(); };
   }, [loadData]);
 
   // Toast Helper
@@ -196,7 +215,7 @@ export default function App() {
 
   const handleLogout = async () => {
     if (currentUser) {
-      storageService.addAuditLog(
+      await storageService.addAuditLog(
         currentUser,
         'DANG_XUAT',
         currentUser.username,
@@ -204,12 +223,22 @@ export default function App() {
       );
     }
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        showToast('Chưa đăng xuất được', 'Vui lòng kiểm tra mạng và thử lại.', 'error');
+        return;
+      }
     } catch (err) {
       console.warn('Lỗi đăng xuất Supabase Auth:', err);
+      showToast('Chưa đăng xuất được', 'Vui lòng thử lại.', 'error');
+      return;
     }
-    storageService.setCurrentUser(null);
+    storageService.clearSessionData();
     setCurrentUser(null);
+    setCurrentTab('dashboard');
+    setEditingMember(null);
+    setViewingMember(null);
+    setIsFormModalOpen(false);
     showToast('Đã đăng xuất', 'Phiên làm việc an toàn đã kết thúc.', 'info');
   };
 
