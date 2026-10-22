@@ -10,6 +10,7 @@ import {
   HoSoKhenThuong,
   DismissMemberData
 } from '../types';
+import { OFFICIAL_MEMBERS } from '../data/officialMembers';
 import { supabase, SUPABASE_TABLES, SUPABASE_URL } from './supabaseClient';
 import { sessionDataCache, removeLegacyBusinessData } from './sessionDataCache';
 
@@ -248,6 +249,8 @@ const INITIAL_TO_ANTT: ToANTT[] = [
     ma_to: 'TO-AB-01',
     ten_to: 'Tổ ANTT Ấp An Bình',
     ap_id: 'ap_01',
+    to_truong_id: 'ns_007',
+    to_pho_id: 'ns_008',
     ngay_thanh_lap: '2024-07-01',
     dia_ban_hoat_dong: 'Toàn bộ địa bàn Ấp An Bình',
     trang_thai: 'hoat_dong',
@@ -272,6 +275,7 @@ const INITIAL_TO_ANTT: ToANTT[] = [
     ma_to: 'TO-AK-03',
     ten_to: 'Tổ ANTT Ấp An Khương',
     ap_id: 'ap_03',
+    to_truong_id: 'ns_001',
     ngay_thanh_lap: '2024-07-01',
     dia_ban_hoat_dong: 'Toàn bộ địa bàn Ấp An Khương',
     trang_thai: 'hoat_dong',
@@ -296,6 +300,8 @@ const INITIAL_TO_ANTT: ToANTT[] = [
     ma_to: 'TO-ALA-05',
     ten_to: 'Tổ ANTT Ấp An Lợi A',
     ap_id: 'ap_05',
+    to_truong_id: 'ns_011',
+    to_pho_id: 'ns_012',
     ngay_thanh_lap: '2024-07-01',
     dia_ban_hoat_dong: 'Toàn bộ địa bàn Ấp An Lợi A',
     trang_thai: 'hoat_dong',
@@ -307,6 +313,7 @@ const INITIAL_TO_ANTT: ToANTT[] = [
     ma_to: 'TO-ALB-06',
     ten_to: 'Tổ ANTT Ấp An Lợi B',
     ap_id: 'ap_06',
+    to_truong_id: 'ns_016',
     ngay_thanh_lap: '2024-07-01',
     dia_ban_hoat_dong: 'Toàn bộ địa bàn Ấp An Lợi B',
     trang_thai: 'hoat_dong',
@@ -480,9 +487,9 @@ const INITIAL_TO_ANTT: ToANTT[] = [
   },
 ];
 
-// Dữ liệu chuẩn chính thức lực lượng ANTT cơ sở xã Lai Vung (27 đồng chí chính thức theo biểu mẫu)
-const INITIAL_NHAN_SU: NhanSu[] = [];
-export const DEMO_SAMPLE_MEMBERS: NhanSu[] = [];
+// Dữ liệu chuẩn chính thức lực lượng ANTT cơ sở xã Lai Vung (19 đồng chí chính thức theo biểu mẫu văn bản)
+const INITIAL_NHAN_SU: NhanSu[] = OFFICIAL_MEMBERS;
+export const DEMO_SAMPLE_MEMBERS: NhanSu[] = OFFICIAL_MEMBERS;
 const INITIAL_TUAN_TRA: NhatKyTuanTra[] = [];
 const INITIAL_TAP_HUAN: DotTapHuan[] = [];
 const INITIAL_KHEN_THUONG: HoSoKhenThuong[] = [];
@@ -1978,6 +1985,10 @@ class StorageService {
     } else {
       try {
         list = JSON.parse(raw);
+        if (list.length === 0 && INITIAL_NHAN_SU.length > 0 && !this.getPendingSync().clearAllPending) {
+          this.setNhanSuListLocalOnly(INITIAL_NHAN_SU);
+          list = INITIAL_NHAN_SU;
+        }
       } catch {
         list = INITIAL_NHAN_SU;
       }
@@ -2616,8 +2627,23 @@ class StorageService {
     }
   }
 
-  resetToDemoData(): void {
-    throw new Error('Bản vận hành không chứa dữ liệu mẫu. Hãy tải dữ liệu từ Supabase.');
+  resetToDemoData(user?: UserAccount): void {
+    this.savePendingSync({
+      hardDeletedIds: [],
+      softDeletedMap: {},
+      deletedTombstones: {},
+      softDeletedTombstones: {},
+      clearAllPending: false,
+    });
+    this.setNhanSuList(OFFICIAL_MEMBERS);
+    const currentUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
+    this.addAuditLog(
+      currentUser,
+      'KHOI_PHUC',
+      'Danh sách hồ sơ nhân sự ANTT cơ sở',
+      `Khôi phục danh sách chính thức gồm ${OFFICIAL_MEMBERS.length} đồng chí theo biểu mẫu thống kê Công an xã Lai Vung`
+    );
+    this.notifyDataRefresh();
   }
 
   clearAllData(user?: UserAccount): void {
