@@ -732,7 +732,8 @@ export const MemberFormModal: React.FC<MemberFormModalProps> = ({
                 >
                   <option value="Tổ trưởng">Tổ trưởng</option>
                   <option value="Tổ phó">Tổ phó</option>
-                  <option value="Thành viên">Thành viên</option>
+                  <option value="Thành viên">Thành viên (Tổ viên)</option>
+                  <option value="Tổ viên">Tổ viên</option>
                 </select>
               </div>
 

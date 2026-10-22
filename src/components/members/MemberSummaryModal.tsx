@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { NhanSu, DiaBanAp, ToANTT } from '../../types';
-import { calculateAge, getAgeGroup } from '../../utils/helpers';
+import { calculateAge, getAgeGroup, isThanhVien } from '../../utils/helpers';
 
 interface MemberSummaryModalProps {
   isOpen: boolean;
@@ -48,7 +48,7 @@ export const MemberSummaryModal: React.FC<MemberSummaryModalProps> = ({
     const total = list.length;
     const toTruong = list.filter(m => m.chuc_vu === 'Tổ trưởng').length;
     const toPho = list.filter(m => m.chuc_vu === 'Tổ phó').length;
-    const thanhVien = list.filter(m => m.chuc_vu === 'Thành viên').length;
+    const thanhVien = list.filter(m => isThanhVien(m.chuc_vu)).length;
 
     // Age groups
     let age18_30 = 0;
@@ -132,7 +132,7 @@ export const MemberSummaryModal: React.FC<MemberSummaryModalProps> = ({
     });
     const tt = list.filter(m => m.chuc_vu === 'Tổ trưởng').length;
     const tp = list.filter(m => m.chuc_vu === 'Tổ phó').length;
-    const tv = list.filter(m => m.chuc_vu === 'Thành viên').length;
+    const tv = list.filter(m => isThanhVien(m.chuc_vu)).length;
     const total = list.length;
     const pct = totalCount > 0 ? Math.round((total / totalCount) * 100) : 0;
     return { grp, tt, tp, tv, total, pct };
@@ -150,7 +150,7 @@ export const MemberSummaryModal: React.FC<MemberSummaryModalProps> = ({
     const list = activeMembers.filter(m => (m.trinh_do_hoc_van || 'Khác') === item.hv);
     const tt = list.filter(m => m.chuc_vu === 'Tổ trưởng').length;
     const tp = list.filter(m => m.chuc_vu === 'Tổ phó').length;
-    const tv = list.filter(m => m.chuc_vu === 'Thành viên').length;
+    const tv = list.filter(m => isThanhVien(m.chuc_vu)).length;
     const total = list.length;
     const pct = totalCount > 0 ? Math.round((total / totalCount) * 100) : 0;
     return { label: item.label, tt, tp, tv, total, pct };
@@ -168,7 +168,7 @@ export const MemberSummaryModal: React.FC<MemberSummaryModalProps> = ({
     const list = activeMembers.filter(item.filter);
     const tt = list.filter(m => m.chuc_vu === 'Tổ trưởng').length;
     const tp = list.filter(m => m.chuc_vu === 'Tổ phó').length;
-    const tv = list.filter(m => m.chuc_vu === 'Thành viên').length;
+    const tv = list.filter(m => isThanhVien(m.chuc_vu)).length;
     const total = list.length;
     const pct = totalCount > 0 ? Math.round((total / totalCount) * 100) : 0;
     return { label: item.label, tt, tp, tv, total, pct };

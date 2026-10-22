@@ -15,7 +15,7 @@ import {
   Siren
 } from 'lucide-react';
 import { NhanSu, DiaBanAp, ToANTT, FilterParams } from '../types';
-import { calculateAge, getAgeGroup } from '../utils/helpers';
+import { calculateAge, getAgeGroup, isThanhVien } from '../utils/helpers';
 import { NavTab } from '../components/layout/Sidebar';
 import { storageService } from '../services/storage';
 
@@ -44,7 +44,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Chức vụ
   const toTruongCount = activeMembers.filter(m => m.chuc_vu === 'Tổ trưởng').length;
   const toPhoCount = activeMembers.filter(m => m.chuc_vu === 'Tổ phó').length;
-  const thanhVienCount = activeMembers.filter(m => m.chuc_vu === 'Thành viên').length;
+  const thanhVienCount = activeMembers.filter(m => isThanhVien(m.chuc_vu)).length;
 
   // Tiêu chí chính trị & chuyển đổi số
   const dangVienCount = activeMembers.filter(m => m.dang_vien).length;
@@ -435,7 +435,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             >
               <div className="flex items-center gap-2.5">
                 <div className="w-2.5 h-2.5 rounded-full bg-slate-500" />
-                <span className="text-xs font-bold text-slate-800">Thành viên</span>
+                <span className="text-xs font-bold text-slate-800">Thành viên (Tổ viên)</span>
               </div>
               <span className="text-xs font-extrabold text-slate-700">{thanhVienCount} đồng chí</span>
             </div>

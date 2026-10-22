@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Download, FileSpreadsheet, Printer, Shield, CheckCircle, FileText } from 'lucide-react';
 import { NhanSu, DiaBanAp, ToANTT } from '../types';
+import { isThanhVien } from '../utils/helpers';
 import { excelService } from '../services/excelService';
 
 interface ExportDataProps {
@@ -25,7 +26,13 @@ export const ExportData: React.FC<ExportDataProps> = ({
     .filter(m => {
       if (targetTrangThai !== 'all' && m.trang_thai !== targetTrangThai) return false;
       if (targetAp !== 'all' && m.ap_id !== targetAp) return false;
-      if (targetChucVu !== 'all' && m.chuc_vu !== targetChucVu) return false;
+      if (targetChucVu !== 'all') {
+        if (targetChucVu === 'Thành viên' || targetChucVu === 'Tổ viên') {
+          if (!isThanhVien(m.chuc_vu)) return false;
+        } else if (m.chuc_vu !== targetChucVu) {
+          return false;
+        }
+      }
       return true;
     });
 
@@ -106,7 +113,7 @@ export const ExportData: React.FC<ExportDataProps> = ({
               <option value="all">Tất cả chức vụ (Tổ trưởng, Tổ phó, Tổ viên)</option>
               <option value="Tổ trưởng">Chỉ Tổ trưởng</option>
               <option value="Tổ phó">Chỉ Tổ phó</option>
-              <option value="Thành viên">Chỉ Thành viên</option>
+              <option value="Thành viên">Chỉ Thành viên (Tổ viên)</option>
             </select>
           </div>
 

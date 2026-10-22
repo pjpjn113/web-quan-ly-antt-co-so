@@ -15,7 +15,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { NhanSu, DiaBanAp, ToANTT } from '../../types';
-import { calculateAge, getAgeGroup } from '../../utils/helpers';
+import { calculateAge, getAgeGroup, isThanhVien } from '../../utils/helpers';
 
 interface MemberFilterStatsProps {
   members: NhanSu[];
@@ -66,7 +66,7 @@ export const MemberFilterStats: React.FC<MemberFilterStatsProps> = ({
   // 1. Chức vụ counts
   const toTruongCount = activeMembers.filter(m => m.chuc_vu === 'Tổ trưởng').length;
   const toPhoCount = activeMembers.filter(m => m.chuc_vu === 'Tổ phó').length;
-  const thanhVienCount = activeMembers.filter(m => m.chuc_vu === 'Thành viên').length;
+  const thanhVienCount = activeMembers.filter(m => isThanhVien(m.chuc_vu)).length;
 
   // 2. Nhóm tuổi counts
   const ageGroupKeys = ['18–30', '31–45', '46–60', '61–70', 'Trên 70'] as const;
@@ -355,7 +355,7 @@ export const MemberFilterStats: React.FC<MemberFilterStatsProps> = ({
               >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-emerald-700">
-                    🛡️ Thành viên
+                    🛡️ Thành viên (Tổ viên)
                   </span>
                   {selectedChucVu === 'Thành viên' && <Check className="w-4 h-4 text-white" />}
                 </div>

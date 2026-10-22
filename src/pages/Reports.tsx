@@ -1,7 +1,7 @@
 import React from 'react';
 import { BarChart3, Printer, Users, Award, Smartphone, CreditCard, Shield, MapPin, Clock } from 'lucide-react';
 import { NhanSu, DiaBanAp, ToANTT } from '../types';
-import { calculateAge, getAgeGroup, getMemberServiceDuration } from '../utils/helpers';
+import { calculateAge, getAgeGroup, getMemberServiceDuration, isThanhVien } from '../utils/helpers';
 
 interface ReportsProps {
   members: NhanSu[];
@@ -188,6 +188,7 @@ export const Reports: React.FC<ReportsProps> = ({
                 <th className="py-3 px-3 text-center">Nữ</th>
                 <th className="py-3 px-3 text-center">Tổ trưởng</th>
                 <th className="py-3 px-3 text-center">Tổ phó</th>
+                <th className="py-3 px-3 text-center">Thành viên</th>
                 <th className="py-3 px-3 text-center">Đảng viên</th>
                 <th className="py-3 px-3 text-center">VNeID M2</th>
                 <th className="py-3 px-3 text-center">Có TK Ngân hàng</th>
@@ -204,6 +205,7 @@ export const Reports: React.FC<ReportsProps> = ({
                     <td className="py-3 px-3 text-center">{list.filter(m => m.gioi_tinh === 'Nữ').length}</td>
                     <td className="py-3 px-3 text-center font-semibold text-red-700">{list.filter(m => m.chuc_vu === 'Tổ trưởng').length}</td>
                     <td className="py-3 px-3 text-center font-semibold text-blue-700">{list.filter(m => m.chuc_vu === 'Tổ phó').length}</td>
+                    <td className="py-3 px-3 text-center font-semibold text-emerald-700">{list.filter(m => isThanhVien(m.chuc_vu)).length}</td>
                     <td className="py-3 px-3 text-center font-semibold text-amber-700">{list.filter(m => m.dang_vien).length}</td>
                     <td className="py-3 px-3 text-center text-emerald-700 font-bold">{list.filter(m => m.vneid_muc_2).length}</td>
                     <td className="py-3 px-3 text-center text-blue-700 font-bold">{list.filter(m => m.co_tai_khoan).length}</td>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Search, RotateCcw, Users, Eye, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { NhanSu, DiaBanAp, ToANTT } from '../types';
-import { calculateAge, getAgeGroup, formatDateVN, getMemberServiceDuration } from '../utils/helpers';
+import { calculateAge, getAgeGroup, formatDateVN, getMemberServiceDuration, isThanhVien } from '../utils/helpers';
 import { maskCCCD } from '../utils/security';
 
 interface AdvancedSearchProps {
@@ -58,7 +58,13 @@ export const AdvancedSearch: React.FC<AdvancedSearchProps> = ({
 
       if (apId !== 'all' && m.ap_id !== apId) return false;
       if (toId !== 'all' && m.to_antt_id !== toId) return false;
-      if (chucVu !== 'all' && m.chuc_vu !== chucVu) return false;
+      if (chucVu !== 'all') {
+        if (chucVu === 'Thành viên' || chucVu === 'Tổ viên') {
+          if (!isThanhVien(m.chuc_vu)) return false;
+        } else if (m.chuc_vu !== chucVu) {
+          return false;
+        }
+      }
 
       if (kiemNhiem !== 'all') {
         if (kiemNhiem === 'has_any') {
@@ -217,7 +223,7 @@ export const AdvancedSearch: React.FC<AdvancedSearchProps> = ({
               <option value="all">Tất cả chức vụ</option>
               <option value="Tổ trưởng">Tổ trưởng</option>
               <option value="Tổ phó">Tổ phó</option>
-              <option value="Thành viên">Thành viên</option>
+              <option value="Thành viên">Thành viên (Tổ viên)</option>
             </select>
           </div>
 

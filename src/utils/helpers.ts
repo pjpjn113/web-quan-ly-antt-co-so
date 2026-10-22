@@ -383,3 +383,32 @@ export function findMissingFields(member: NhanSu): string[] {
   }
   return issues;
 }
+
+/**
+ * Kiểm tra xem chức vụ có thuộc nhóm Thành viên / Tổ viên hay không.
+ * Theo quy định nghiệp vụ, "Tổ viên" mặc định là "Thành viên".
+ * Các đồng chí có chức vụ không phải là Tổ trưởng hoặc Tổ phó sẽ được tính vào Thành viên.
+ */
+export function isThanhVien(chucVu?: string | null): boolean {
+  if (!chucVu || chucVu.trim() === '') return true;
+  const normalized = chucVu.trim().toLowerCase();
+  if (normalized === 'tổ trưởng' || normalized === 'to truong') return false;
+  if (normalized === 'tổ phó' || normalized === 'to pho') return false;
+  return true;
+}
+
+/**
+ * Chuẩn hóa chức vụ phục vụ hiển thị & thống kê:
+ * - 'Tổ trưởng'
+ * - 'Tổ phó'
+ * - 'Thành viên' (Tổ viên mặc định là Thành viên)
+ */
+export function normalizeChucVu(chucVu?: string | null): 'Tổ trưởng' | 'Tổ phó' | 'Thành viên' {
+  if (!chucVu || chucVu.trim() === '') return 'Thành viên';
+  const trimmed = chucVu.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === 'tổ trưởng' || lower === 'to truong') return 'Tổ trưởng';
+  if (lower === 'tổ phó' || lower === 'to pho') return 'Tổ phó';
+  return 'Thành viên';
+}
+

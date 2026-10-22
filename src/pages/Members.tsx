@@ -35,7 +35,7 @@ import {
   FilterParams,
   DismissMemberData
 } from '../types';
-import { calculateAge, getAgeGroup, formatDateVN, getMemberServiceDuration } from '../utils/helpers';
+import { calculateAge, getAgeGroup, formatDateVN, getMemberServiceDuration, isThanhVien } from '../utils/helpers';
 import { maskCCCD, maskPhoneNumber } from '../utils/security';
 import { MemberFilterStats } from '../components/members/MemberFilterStats';
 import { MemberSummaryModal } from '../components/members/MemberSummaryModal';
@@ -222,7 +222,7 @@ export const Members: React.FC<MembersProps> = ({
   const chucVuCounts = useMemo(() => ({
     toTruong: activeMembers.filter(m => m.chuc_vu === 'Tổ trưởng').length,
     toPho: activeMembers.filter(m => m.chuc_vu === 'Tổ phó').length,
-    thanhVien: activeMembers.filter(m => m.chuc_vu === 'Thành viên' || m.chuc_vu === 'Tổ viên').length,
+    thanhVien: activeMembers.filter(m => isThanhVien(m.chuc_vu)).length,
   }), [activeMembers]);
 
   const apCounts = useMemo(() => {
@@ -303,7 +303,13 @@ export const Members: React.FC<MembersProps> = ({
 
         if (selectedAp !== 'all' && m.ap_id !== selectedAp) return false;
         if (selectedTo !== 'all' && m.to_antt_id !== selectedTo) return false;
-        if (selectedChucVu !== 'all' && m.chuc_vu !== selectedChucVu) return false;
+        if (selectedChucVu !== 'all') {
+          if (selectedChucVu === 'Thành viên' || selectedChucVu === 'Tổ viên') {
+            if (!isThanhVien(m.chuc_vu)) return false;
+          } else if (m.chuc_vu !== selectedChucVu) {
+            return false;
+          }
+        }
         if (selectedGioiTinh !== 'all' && m.gioi_tinh !== selectedGioiTinh) return false;
         if (selectedHocVan !== 'all' && m.trinh_do_hoc_van !== selectedHocVan) return false;
         if (selectedChuyenMon !== 'all' && m.trinh_do_chuyen_mon !== selectedChuyenMon) return false;
@@ -734,7 +740,7 @@ export const Members: React.FC<MembersProps> = ({
               <option value="all">Tất cả chức vụ ({activeMembers.length})</option>
               <option value="Tổ trưởng">Tổ trưởng ({chucVuCounts.toTruong} đ/c)</option>
               <option value="Tổ phó">Tổ phó ({chucVuCounts.toPho} đ/c)</option>
-              <option value="Thành viên">Thành viên ({chucVuCounts.thanhVien} đ/c)</option>
+              <option value="Thành viên">Thành viên (Tổ viên) ({chucVuCounts.thanhVien} đ/c)</option>
             </select>
 
             <button

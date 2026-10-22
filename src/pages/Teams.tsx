@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldAlert, Plus, Edit2, Trash2, Users, Save, X, AlertCircle, MapPin } from 'lucide-react';
 import { ToANTT, DiaBanAp, NhanSu, UserAccount } from '../types';
+import { isThanhVien } from '../utils/helpers';
 
 interface TeamsProps {
   toANTTList: ToANTT[];
@@ -97,7 +98,7 @@ export const Teams: React.FC<TeamsProps> = ({
           const teamMembers = members.filter(m => m.to_antt_id === to.id && m.trang_thai === 'dang_hoat_dong');
           const toTruong = teamMembers.find(m => m.chuc_vu === 'Tổ trưởng');
           const toPho = teamMembers.find(m => m.chuc_vu === 'Tổ phó');
-          const thanhVien = teamMembers.filter(m => m.chuc_vu === 'Thành viên');
+          const thanhVien = teamMembers.filter(m => isThanhVien(m.chuc_vu));
 
           return (
             <div
@@ -169,7 +170,7 @@ export const Teams: React.FC<TeamsProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-500">Tổ viên:</span>
+                    <span className="text-slate-500">Tổ viên (Thành viên):</span>
                     <span className="font-semibold text-slate-800">
                       {thanhVien.length} đồng chí
                     </span>
