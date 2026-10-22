@@ -23,7 +23,9 @@ import {
   Building2,
   Calendar,
   AlertTriangle,
-  Clock
+  Clock,
+  RefreshCw,
+  Sparkles
 } from 'lucide-react';
 import { 
   NhanSu, 
@@ -195,11 +197,32 @@ export const Members: React.FC<MembersProps> = ({
     }
   };
 
+  const [isSyncing19, setIsSyncing19] = useState(false);
+
+  const handleSyncOfficial19 = async () => {
+    setIsSyncing19(true);
+    try {
+      const res = await storageService.syncOfficial19ToDatabase(currentUser);
+      if (onReloadData) {
+        onReloadData();
+      }
+      if (onShowToast) {
+        onShowToast(
+          res.success ? 'Đồng bộ cơ sở dữ liệu thành công' : 'Thông báo',
+          res.message,
+          res.success ? 'success' : 'info'
+        );
+      }
+    } finally {
+      setIsSyncing19(false);
+    }
+  };
+
   // Thống kê số lượng phục vụ hiển thị trực tiếp trên các bộ lọc
   const chucVuCounts = useMemo(() => ({
     toTruong: activeMembers.filter(m => m.chuc_vu === 'Tổ trưởng').length,
     toPho: activeMembers.filter(m => m.chuc_vu === 'Tổ phó').length,
-    thanhVien: activeMembers.filter(m => m.chuc_vu === 'Thành viên').length,
+    thanhVien: activeMembers.filter(m => m.chuc_vu === 'Thành viên' || m.chuc_vu === 'Tổ viên').length,
   }), [activeMembers]);
 
   const apCounts = useMemo(() => {
@@ -411,6 +434,21 @@ export const Members: React.FC<MembersProps> = ({
               <span>BẢNG SỐ LƯỢNG 19 ẤP</span>
             </button>
 
+            {/* Quick sync 19 members button */}
+            {canEdit && (
+              <button
+                type="button"
+                id="btn-sync-official-19"
+                onClick={handleSyncOfficial19}
+                disabled={isSyncing19}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 text-amber-900 bg-amber-50 hover:bg-amber-100 text-xs font-bold flex items-center gap-1.5 transition shadow-xs disabled:opacity-50"
+                title="Bổ sung 19 đồng chí mới từ văn bản biểu mẫu vào CSDL (nâng quân số từ 64 lên 83)"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-amber-700 ${isSyncing19 ? 'animate-spin' : ''}`} />
+                <span>NẠP 19 NS VÀO CSDL (TỔNG 83)</span>
+              </button>
+            )}
+
             {/* Sensitive unmask toggle */}
             <button
               type="button"
@@ -531,6 +569,34 @@ export const Members: React.FC<MembersProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Banner thông báo nạp 19 đồng chí mới nếu quân số chưa đạt 83 */}
+      {statusTab === 'dang_hoat_dong' && activeWorkingMembers.length < 83 && canEdit && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <Sparkles className="w-4 h-4 text-amber-700" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-amber-950">
+                Phát hiện 19 đồng chí mới từ biểu mẫu văn bản cần nạp vào cơ sở dữ liệu
+              </div>
+              <div className="text-[11px] text-amber-800 mt-0.5">
+                Quân số hiện tại: {activeWorkingMembers.length} đồng chí. Sau khi nạp sẽ là 83 đồng chí (64 + 19 = 83).
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncOfficial19}
+            disabled={isSyncing19}
+            className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0 shadow-xs disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing19 ? 'animate-spin' : ''}`} />
+            <span>Nạp ngay vào CSDL (64 + 19 = 83)</span>
+          </button>
+        </div>
+      )}
 
       {/* Banner chuyên đề khi xem danh sách Đã cho thôi tham gia */}
       {statusTab === 'da_thoi_viec' && (

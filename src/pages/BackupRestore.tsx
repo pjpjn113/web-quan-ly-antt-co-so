@@ -210,6 +210,24 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
     }
   };
 
+  const [isSyncing19, setIsSyncing19] = useState(false);
+
+  const handleSyncOfficial19 = async () => {
+    setIsSyncing19(true);
+    try {
+      const res = await storageService.syncOfficial19ToDatabase(currentUser);
+      onRefreshData();
+      await checkCloudStatus();
+      onShowToast(
+        res.success ? 'Đồng bộ cơ sở dữ liệu thành công' : 'Lưu ý',
+        res.message,
+        res.success ? 'success' : 'info'
+      );
+    } finally {
+      setIsSyncing19(false);
+    }
+  };
+
   const handleExportBackup = () => {
     try {
       const backupJson = storageService.exportFullBackupJSON();
@@ -479,15 +497,15 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
           )}
 
           {/* Action Buttons for 2-way Sync */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-200 flex flex-col justify-between gap-3">
               <div>
                 <h4 className="text-xs font-black text-emerald-950 uppercase flex items-center gap-1.5">
                   <ArrowUpFromLine className="w-4 h-4 text-emerald-700" />
-                  Đẩy toàn bộ dữ liệu hiện tại lên Supabase
+                  Đẩy dữ liệu lên Supabase
                 </h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                  Đồng bộ tất cả hồ sơ nhân sự, 19 Ấp, 19 Tổ ANTT, sổ tuần tra, tập huấn và khen thưởng từ máy hiện tại lên các bảng trên Supabase.
+                  Đồng bộ tất cả hồ sơ nhân sự, 19 Ấp, 19 Tổ ANTT, tuần tra, tập huấn và khen thưởng lên các bảng Supabase.
                 </p>
               </div>
               <button
@@ -497,7 +515,7 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
                 className="w-full py-2.5 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <ArrowUpFromLine className={`w-4 h-4 ${isSyncingPush ? 'animate-bounce' : ''}`} />
-                <span>{isSyncingPush ? 'ĐANG ĐẨY DỮ LIỆU LÊN SUPABASE...' : 'ĐẨY DỮ LIỆU LÊN SUPABASE NGAY'}</span>
+                <span>{isSyncingPush ? 'ĐANG ĐẨY LÊN SUPABASE...' : 'ĐẨY LÊN SUPABASE'}</span>
               </button>
             </div>
 
@@ -505,10 +523,10 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
               <div>
                 <h4 className="text-xs font-black text-blue-950 uppercase flex items-center gap-1.5">
                   <ArrowDownToLine className="w-4 h-4 text-blue-700" />
-                  Tải dữ liệu mới nhất từ Supabase về máy
+                  Tải dữ liệu từ Supabase
                 </h4>
                 <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                  Cập nhật toàn bộ dữ liệu mới nhất đang lưu trên đám mây Supabase về màn hình làm việc (dùng khi nhiều cán bộ cùng nhập liệu).
+                  Cập nhật toàn bộ dữ liệu mới nhất đang lưu trên đám mây Supabase về máy (đồng bộ đa thiết bị).
                 </p>
               </div>
               <button
@@ -518,7 +536,28 @@ export const BackupRestore: React.FC<BackupRestoreProps> = ({
                 className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <ArrowDownToLine className={`w-4 h-4 ${isSyncingPull ? 'animate-bounce' : ''}`} />
-                <span>{isSyncingPull ? 'ĐANG TẢI TỪ SUPABASE...' : 'TẢI DỮ LIỆU TỪ SUPABASE VỀ MÁY'}</span>
+                <span>{isSyncingPull ? 'ĐANG TẢI VỀ...' : 'TẢI TỪ SUPABASE'}</span>
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-300 flex flex-col justify-between gap-3">
+              <div>
+                <h4 className="text-xs font-black text-amber-950 uppercase flex items-center gap-1.5">
+                  <RefreshCw className="w-4 h-4 text-amber-700" />
+                  Nạp 19 NS mới (Tổng 83)
+                </h4>
+                <p className="text-xs text-slate-700 mt-1 leading-relaxed">
+                  Bổ sung 19 đồng chí chính thức từ văn bản biểu mẫu vào cơ sở dữ liệu (nâng tổng quân số từ 64 lên 83 đồng chí).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleSyncOfficial19()}
+                disabled={isSyncing19}
+                className="w-full py-2.5 px-4 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing19 ? 'animate-spin' : ''}`} />
+                <span>{isSyncing19 ? 'ĐANG CẬP NHẬT...' : 'NẠP 19 NS VÀO CSDL NGAY'}</span>
               </button>
             </div>
           </div>

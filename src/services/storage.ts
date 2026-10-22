@@ -494,6 +494,107 @@ const INITIAL_TUAN_TRA: NhatKyTuanTra[] = [];
 const INITIAL_TAP_HUAN: DotTapHuan[] = [];
 const INITIAL_KHEN_THUONG: HoSoKhenThuong[] = [];
 
+/**
+ * Gộp 19 đồng chí chính thức từ biểu mẫu văn bản vào danh sách hiện tại.
+ * Đảm bảo:
+ * - Nếu đồng chí đã có (trùng CCCD hoặc Họ tên + Ngày sinh): cập nhật thông tin chuẩn xác theo biểu mẫu.
+ * - Nếu chưa có: thêm mới nối tiếp (STT từ 65..83, mã NS từ NS-065..NS-083, ID duy nhất), đưa tổng quân số lên đúng 83.
+ */
+export function mergeOfficial19Members(existingList: NhanSu[]): {
+  mergedList: NhanSu[];
+  newlyAddedCount: number;
+  toUpsert: NhanSu[];
+} {
+  const currentList = [...existingList];
+  const toUpsert: NhanSu[] = [];
+  let addedCount = 0;
+
+  for (const official of OFFICIAL_MEMBERS) {
+    const cleanCCCD = (official.so_cccd || '').trim();
+
+    // 1. Tìm theo số CCCD (định danh duy nhất của công dân)
+    let idx = -1;
+    if (cleanCCCD) {
+      idx = currentList.findIndex(
+        m => m.so_cccd && m.so_cccd.trim() === cleanCCCD
+      );
+    }
+
+    // 2. Nếu không thấy theo CCCD, tìm theo Họ tên + Ngày sinh
+    if (idx === -1) {
+      idx = currentList.findIndex(
+        m => m.ho_ten.trim().toLowerCase() === official.ho_ten.trim().toLowerCase() &&
+             m.ngay_sinh === official.ngay_sinh
+      );
+    }
+
+    if (idx >= 0) {
+      const existing = currentList[idx];
+      const updated: NhanSu = {
+        ...existing,
+        ho_ten: official.ho_ten,
+        ngay_sinh: official.ngay_sinh,
+        gioi_tinh: official.gioi_tinh,
+        chuc_vu: official.chuc_vu,
+        chuc_vu_kiem_nhiem: official.chuc_vu_kiem_nhiem,
+        ap_id: official.ap_id,
+        to_antt_id: official.to_antt_id,
+        dia_chi_chi_tiet: official.dia_chi_chi_tiet,
+        noi_o_hien_nay: official.noi_o_hien_nay,
+        trinh_do_hoc_van: official.trinh_do_hoc_van,
+        trinh_do_chuyen_mon: official.trinh_do_chuyen_mon,
+        chuyen_nganh: official.chuyen_nganh,
+        dang_vien: official.dang_vien,
+        vneid_muc_2: official.vneid_muc_2,
+        co_tai_khoan: official.co_tai_khoan,
+        so_tai_khoan: official.so_tai_khoan,
+        loai_ngan_hang: official.loai_ngan_hang,
+        so_dien_thoai: official.so_dien_thoai,
+        ngay_tham_gia_antt: official.ngay_tham_gia_antt,
+        ma_bhyt: official.ma_bhyt || existing.ma_bhyt,
+        ghi_chu: official.ghi_chu || existing.ghi_chu,
+        trang_thai: 'dang_hoat_dong',
+        updated_at: new Date().toISOString(),
+      };
+      currentList[idx] = updated;
+      toUpsert.push(updated);
+    } else {
+      const maxStt = currentList.reduce((max, m) => Math.max(max, m.stt || 0), 0);
+      const nextStt = maxStt + 1;
+
+      let nextCodeNum = nextStt;
+      while (currentList.some(m => m.ma_nhan_su === `NS-${String(nextCodeNum).padStart(3, '0')}`)) {
+        nextCodeNum++;
+      }
+      const maNhanSu = `NS-${String(nextCodeNum).padStart(3, '0')}`;
+
+      let uniqueId = cleanCCCD ? `ns_official_${cleanCCCD.slice(-6)}_${nextStt}` : `ns_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      while (currentList.some(m => m.id === uniqueId)) {
+        uniqueId = `ns_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      }
+
+      const newMember: NhanSu = {
+        ...official,
+        id: uniqueId,
+        ma_nhan_su: maNhanSu,
+        stt: nextStt,
+        trang_thai: 'dang_hoat_dong',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      currentList.push(newMember);
+      toUpsert.push(newMember);
+      addedCount++;
+    }
+  }
+
+  return {
+    mergedList: currentList,
+    newlyAddedCount: addedCount,
+    toUpsert,
+  };
+}
+
 export type SupabaseSyncStatus =
   | 'checking'
   | 'connected_ready'
@@ -773,6 +874,7 @@ class StorageService {
       so_tai_khoan: item.so_tai_khoan || null,
       vneid_muc_2: Boolean(item.vneid_muc_2),
       so_dien_thoai: item.so_dien_thoai || '',
+      ma_bhyt: item.ma_bhyt || null,
       ghi_chu: item.ghi_chu || null,
       trang_thai: item.trang_thai || 'dang_hoat_dong',
       so_quyet_dinh_thoi_viec: item.so_quyet_dinh_thoi_viec || null,
@@ -1333,7 +1435,13 @@ class StorageService {
             void supabase.from(SUPABASE_TABLES.NHAN_SU).delete().in('id', orphanZombieIds);
           }
 
-          this.setNhanSuListLocalOnly(list);
+          // Tự động gộp 19 đồng chí chính thức từ biểu mẫu văn bản nếu CSDL Supabase chưa có đủ
+          const { mergedList, newlyAddedCount, toUpsert } = mergeOfficial19Members(list);
+          this.setNhanSuListLocalOnly(mergedList);
+
+          if (newlyAddedCount > 0 && toUpsert.length > 0) {
+            void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, toUpsert.map(m => this.toNhanSuRow(m)));
+          }
         }
       }
 
@@ -1980,17 +2088,26 @@ class StorageService {
     const raw = sessionDataCache.getItem(STORAGE_KEYS.NHAN_SU);
     let list: NhanSu[] = [];
     if (!raw) {
-      this.setNhanSuListLocalOnly(INITIAL_NHAN_SU);
-      list = INITIAL_NHAN_SU;
+      const merged = mergeOfficial19Members([]);
+      this.setNhanSuListLocalOnly(merged.mergedList);
+      list = merged.mergedList;
     } else {
       try {
         list = JSON.parse(raw);
-        if (list.length === 0 && INITIAL_NHAN_SU.length > 0 && !this.getPendingSync().clearAllPending) {
-          this.setNhanSuListLocalOnly(INITIAL_NHAN_SU);
-          list = INITIAL_NHAN_SU;
+        if (!this.getPendingSync().clearAllPending) {
+          const { mergedList, newlyAddedCount, toUpsert } = mergeOfficial19Members(list);
+          if (newlyAddedCount > 0) {
+            list = mergedList;
+            this.setNhanSuListLocalOnly(list);
+            if (toUpsert.length > 0) {
+              void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, toUpsert.map(m => this.toNhanSuRow(m)));
+            }
+          }
         }
       } catch {
-        list = INITIAL_NHAN_SU;
+        const merged = mergeOfficial19Members([]);
+        this.setNhanSuListLocalOnly(merged.mergedList);
+        list = merged.mergedList;
       }
     }
     if (includeDeleted) return list;
@@ -2625,6 +2742,62 @@ class StorageService {
         message: 'Lỗi đọc tệp JSON: ' + (e?.message || 'Tệp hỏng hoặc không đúng định dạng'),
       };
     }
+  }
+
+  async syncOfficial19ToDatabase(user?: UserAccount): Promise<{
+    success: boolean;
+    message: string;
+    totalCount: number;
+    newlyAdded: number;
+  }> {
+    const currentList = this.getAllNhanSuRaw();
+    const { mergedList, newlyAddedCount, toUpsert } = mergeOfficial19Members(currentList);
+
+    this.setNhanSuListLocalOnly(mergedList);
+
+    // Cập nhật to_truong_id / to_pho_id cho các tổ ANTT
+    const toList = this.getToANTTList();
+    let toUpdated = false;
+    for (const m of mergedList) {
+      if (m.chuc_vu === 'Tổ trưởng') {
+        const t = toList.find(x => x.id === m.to_antt_id);
+        if (t && t.to_truong_id !== m.id) {
+          t.to_truong_id = m.id;
+          toUpdated = true;
+        }
+      } else if (m.chuc_vu === 'Tổ phó') {
+        const t = toList.find(x => x.id === m.to_antt_id);
+        if (t && t.to_pho_id !== m.id) {
+          t.to_pho_id = m.id;
+          toUpdated = true;
+        }
+      }
+    }
+    if (toUpdated) {
+      this.setToANTTList(toList);
+    }
+
+    if (toUpsert.length > 0) {
+      const dbRows = toUpsert.map(m => this.toNhanSuRow(m));
+      void this.bgUpsert(SUPABASE_TABLES.NHAN_SU, dbRows);
+    }
+
+    const activeUser = user || this.getCurrentUser() || SYSTEM_AUDIT_USER;
+    this.addAuditLog(
+      activeUser,
+      'CAP_NHAT',
+      'Đồng bộ 19 nhân sự chính thức vào CSDL',
+      `Đã cập nhật ${newlyAddedCount} đồng chí mới vào CSDL, nâng tổng số quân số quản lý lên ${mergedList.length} đồng chí.`
+    );
+
+    this.notifyDataRefresh();
+
+    return {
+      success: true,
+      message: `Đã cập nhật thành công! Tổng quân số hiện tại: ${mergedList.length} đồng chí (bổ sung mới ${newlyAddedCount} đồng chí).`,
+      totalCount: mergedList.length,
+      newlyAdded: newlyAddedCount,
+    };
   }
 
   resetToDemoData(user?: UserAccount): void {
